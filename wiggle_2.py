@@ -214,40 +214,12 @@ def update_matrix(b,last=False):
     
     if b.wiggle_head and not b.bone.use_connect:
         sy = (b.wiggle.position_head - b.wiggle.position).length/length_world(b)
-#        if b.bone.inherit_scale == 'FULL':
-#            bpy.context.scene.cursor.location = b.wiggle.position
-#            l0=relative_matrix(mat, Matrix.Translation(b.wiggle.position)).translation.length
-#            l1=(b.wiggle.position_head - b.wiggle.position).length
-#            sy = sy*(l0/l1)
-#            if b.parent:
-#                sy = sy*(b.parent.length/b.parent.bone.length)
             
     scale = Matrix.Scale(sy,4,Vector((0,1,0)))
     
     if last:
-        const = False
-        for c in b.constraints:
-            if c.enabled: # and not (c.type in ['DAMPED_TRACK', 'TRACK_TO']):
-                const = True 
-        if const:
-            b.matrix = b.bone.matrix_local @ b.matrix_basis @ loc @ rot @ scale
-        else:
-            b.matrix = b.matrix @ loc @ rot @ scale
+        b.matrix = b.matrix @ loc @ rot @ scale
     b.wiggle.matrix = flatten(m2 @ rot @ scale)
-
-def get_pin(b):
-    for c in b.constraints:
-        if c.type in ['DAMPED_TRACK','TRACK_TO','LOCKED_TRACK'] and c.target and not c.mute:
-            return c
-    return None
-
-def pin(b):
-    c = get_pin(b)
-    if c:
-        goal = c.target.matrix_world
-        if c.subtarget:
-            goal = goal @ c.target.pose.bones[c.subtarget].matrix
-        b.wiggle.position = b.wiggle.position*(1-c.influence) + goal.translation*c.influence
 
 #can include gravity, wind, etc    
 def move(b,dg,dt,dt2):
@@ -260,7 +232,6 @@ def move(b,dg,dt,dt2):
             fac = 1 - b.wiggle_wind_ob.field.wind_factor * abs(dir.dot((b.wiggle.position - b.wiggle.matrix.translation).normalized()))
             F += dir * fac * b.wiggle_wind_ob.field.strength * b.wiggle_wind / b.wiggle_mass
         b.wiggle.position += b.wiggle.velocity + F*dt2
-        pin(b)
         collide(b,dg,dt)
     
     if b.wiggle_head and not b.bone.use_connect:
@@ -329,7 +300,6 @@ def constrain(b,i,dg,dt):
         s = spring(target, b.wiggle.position, b.wiggle_stiff)
         if p and b.wiggle_chain and p.wiggle_tail: # and b.bone.use_connect:
             fac = get_fac(b.wiggle_mass, p.wiggle_mass)# if i else p.wiggle_stretch
-            if get_pin(b): fac = 1 - b.wiggle_stretch
             if i == 0: fac = p.wiggle_stretch
             if p == b.parent and b.bone.use_connect: #direct parent optimization
                 p.wiggle.position -= s*fac
@@ -393,7 +363,6 @@ def constrain(b,i,dg,dt):
         s = stretch(target, b.wiggle.position, b.wiggle_stretch)
         if p and b.wiggle_chain and p.wiggle_tail: #ASSUMES P IS DIRECT PARENT?
             fac = get_fac(b.wiggle_mass, p.wiggle_mass) #if i else p.wiggle_stretch
-            if get_pin(b): fac = 1 - b.wiggle_stretch
             if i == 0: fac = p.wiggle_stretch
             if (p == b.parent and b.bone.use_connect): #optimization with direct parent tail
                 p.wiggle.position -= s*fac
@@ -416,7 +385,6 @@ def constrain(b,i,dg,dt):
         collide(p,dg,dt)#would only be tail changing
         update_matrix(p)
     if b.wiggle_tail:
-        pin(b)
         collide(b,dg,dt)
     if b.wiggle_head:
         collide(b,dg,dt,True)
@@ -1293,13 +1261,6 @@ def register():
     bpy.utils.register_class(WIGGLE_PT_Tail)
     bpy.utils.register_class(WIGGLE_PT_Utilities)
     bpy.utils.register_class(WIGGLE_PT_Bake)
-    
-#    bpy.app.handlers.frame_change_pre.clear()
-#    bpy.app.handlers.frame_change_post.clear()
-#    bpy.app.handlers.render_pre.clear()
-#    bpy.app.handlers.render_post.clear()
-#    bpy.app.handlers.render_cancel.clear()
-#    bpy.app.handlers.load_post.clear()
     
     bpy.app.handlers.frame_change_pre.append(wiggle_pre)
     bpy.app.handlers.frame_change_post.append(wiggle_post)
