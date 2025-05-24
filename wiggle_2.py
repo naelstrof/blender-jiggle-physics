@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Wiggle 2",
     "author": "Steve Miller",
-    "version": (2, 2, 5),
+    "version": (3, 0, 0),
     "blender": (3, 00, 0),
     "location": "3d Viewport > Animation Panel",
     "description": "Simulate spring-like physics on Bone transforms",
@@ -196,7 +196,7 @@ def update_matrix(b,last=False):
             parent_rot = parent_wiggle_matrix.to_quaternion().to_matrix().to_4x4()
             diff_rot = diff.to_quaternion().to_matrix().to_4x4()
             ro = parent_rot @ diff_rot
-            scalve_val = (id_world @ b.matrix).decompose()[2]
+            scale_val = (id_world @ b.matrix).decompose()[2]
             sc = Matrix.LocRotScale(None,None,scale_val)
             m2 = lo @ ro @ sc
     else:
@@ -211,13 +211,13 @@ def update_matrix(b,last=False):
     rxz = vec.to_track_quat('Y','Z')
     rot = rxz.to_matrix().to_4x4()
     
+    l_world = length_world(b)
     if bone.inherit_scale == 'FULL':
         l0 = bone.length
         l1=relative_matrix(mat, Matrix.Translation(bw.position)).translation.length
         sy = l1 / l0 if l0 != 0 else 1.0
     else:
         par = b.parent
-        l_world = length_world(b)
         if par:
             par_mat = par.matrix
             par_rel = relative_matrix(par_mat, b.matrix).translation
@@ -230,7 +230,7 @@ def update_matrix(b,last=False):
             sy = (id_world @ b.matrix.translation - b.wiggle.position).length/l_world
     
     if b.wiggle_head and not b.bone.use_connect:
-        sy = (b.wiggle.position_head - b.wiggle.position).length/length_world(b)
+        sy = (b.wiggle.position_head - b.wiggle.position).length/l_world
             
     scale = Matrix.Identity(4)
     scale[1][1] = sy
@@ -411,40 +411,50 @@ def constrain(b,i,dg,dt,dt2,iterations):
         
 @persistent
 def wiggle_pre(scene):
-    if (scene.wiggle.lastframe == scene.frame_current) and not scene.wiggle.reset: return
-    if scene.wiggle.is_rendering: return
+    if (scene.wiggle.lastframe == scene.frame_current and not scene.wiggle.reset) or scene.wiggle.is_rendering:
+        return
+
     if not scene.wiggle_enable:
         reset_scene()
         return
+
+    scene_objects = scene.objects
+    scene_collection = scene.collection
+
     for wo in scene.wiggle.list:
-        if wo.name not in scene.objects:
+        ob = scene.objects[wo.name]
+        if not ob:
             build_list()
             return
-        ob = scene.objects[wo.name]
-        if ob.wiggle_mute or ob.wiggle_freeze:
+
+        if getattr(ob, "wiggle_mute", False) or getattr(ob, "wiggle_freeze", False):
             reset_ob(ob)
             continue
+
+        ob_pose_bones = getattr(ob.pose, "bones", {})
+
         for wb in wo.list:
-            if wb.name not in ob.pose.bones:
+            b = ob_pose_bones.get(wb.name)
+            if not b:
                 build_list()
                 return
-            b = ob.pose.bones[wb.name]
-            if b.wiggle_mute or not (b.wiggle_head or b.wiggle_tail):
+            if getattr(b, "wiggle_mute", False) or not (getattr(b, "wiggle_head", False) or getattr(b, "wiggle_tail", False)):
                 reset_bone(b)
                 continue
-            if not b.wiggle.collision_col:
+            bw = b.wiggle
+            if not bw.collision_col:
                 if b.wiggle_collider_collection:
                     b.wiggle_collider_collection = bpy.data.collections.get(b.wiggle_collider_collection.name)
-                    b.wiggle.collision_col = scene.collection
+                    bw.collision_col = scene.collection
                 elif b.wiggle_collider_collection_head:
                     bpy.data.collections.get(b.wiggle_collider_collection_head.name)
-                    b.wiggle.collision_col = scene.collection
+                    bw.collision_col = scene.collection
                 elif b.wiggle_collider:
                     bpy.data.objects.get(b.wiggle_collider.name)
-                    b.wiggle.collision_col = scene.collection
+                    bw.collision_col = scene.collection
                 elif b.wiggle_collider_head:
                     bpy.data.objects.get(b.wiggle_collider_head.name)
-                    b.wiggle.collision_col = scene.collection
+                    bw.collision_col = scene.collection
             b.location = ZERO_VEC
             b.rotation_quaternion = Quaternion((1,0,0,0))
             b.rotation_euler = ZERO_VEC
