@@ -644,7 +644,7 @@ class WiggleBake(bpy.types.Operator):
                 frame = context.scene.frame_end - (preroll%duration)
                 context.scene.frame_set(frame)
             else:
-                context.scene.frame_set(context.scene.frame_start)
+                context.scene.frame_set(context.scene.frame_start-preroll)
             context.scene.wiggle.is_preroll = True
             preroll -= 1
         #bake
