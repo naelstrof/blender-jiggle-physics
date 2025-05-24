@@ -496,9 +496,10 @@ def wiggle_post(scene,dg):
     wiggle_list = wiggle.list
     wiggle_iterations = wiggle.iterations
 
+    objects = scene.objects
     for _ in range(accumulatedFrames):
         for wo in wiggle_list:
-            ob = scene.objects[wo.name]
+            ob = objects[wo.name]
 
             if getattr(ob, 'wiggle_mute', False) or getattr(ob, 'wiggle_freeze', False):
                 continue
@@ -570,43 +571,44 @@ class WiggleCopy(bpy.types.Operator):
     
     def execute(self,context):
         b = context.active_pose_bone
-        b.wiggle_mute = b.wiggle_mute
-        b.wiggle_head = b.wiggle_head
-        b.wiggle_tail = b.wiggle_tail
-        b.wiggle_head_mute = b.wiggle_head_mute
-        b.wiggle_tail_mute = b.wiggle_tail_mute
-        
-        b.wiggle_mass = b.wiggle_mass
-        b.wiggle_stiff = b.wiggle_stiff
-        b.wiggle_stretch = b.wiggle_stretch
-        b.wiggle_damp = b.wiggle_damp
-        b.wiggle_gravity = b.wiggle_gravity
-        b.wiggle_wind_ob = b.wiggle_wind_ob
-        b.wiggle_wind = b.wiggle_wind
-        b.wiggle_collider_type = b.wiggle_collider_type
-        b.wiggle_collider = b.wiggle_collider
-        b.wiggle_collider_collection = b.wiggle_collider_collection
-        b.wiggle_radius = b.wiggle_radius
-        b.wiggle_friction = b.wiggle_friction
-        b.wiggle_bounce = b.wiggle_bounce
-        b.wiggle_sticky = b.wiggle_sticky
-        b.wiggle_chain = b.wiggle_chain
-        
-        b.wiggle_mass_head = b.wiggle_mass_head
-        b.wiggle_stiff_head = b.wiggle_stiff_head
-        b.wiggle_stretch_head = b.wiggle_stretch_head
-        b.wiggle_damp_head = b.wiggle_damp_head
-        b.wiggle_gravity_head = b.wiggle_gravity_head
-        b.wiggle_wind_ob_head = b.wiggle_wind_ob_head
-        b.wiggle_wind_head = b.wiggle_wind_head
-        b.wiggle_collider_type_head = b.wiggle_collider_type_head
-        b.wiggle_collider_head = b.wiggle_collider_head
-        b.wiggle_collider_collection_head = b.wiggle_collider_collection_head
-        b.wiggle_radius_head = b.wiggle_radius_head
-        b.wiggle_friction_head = b.wiggle_friction_head
-        b.wiggle_bounce_head = b.wiggle_bounce_head
-        b.wiggle_sticky_head = b.wiggle_sticky_head
-        b.wiggle_chain_head = b.wiggle_chain_head
+        for ob in context.selected_pose_bones:
+            ob.wiggle_mute = b.wiggle_mute
+            ob.wiggle_head = b.wiggle_head
+            ob.wiggle_tail = b.wiggle_tail
+            ob.wiggle_head_mute = b.wiggle_head_mute
+            ob.wiggle_tail_mute = b.wiggle_tail_mute
+            
+            ob.wiggle_mass = b.wiggle_mass
+            ob.wiggle_stiff = b.wiggle_stiff
+            ob.wiggle_stretch = b.wiggle_stretch
+            ob.wiggle_damp = b.wiggle_damp
+            ob.wiggle_gravity = b.wiggle_gravity
+            ob.wiggle_wind_ob = b.wiggle_wind_ob
+            ob.wiggle_wind = b.wiggle_wind
+            ob.wiggle_collider_type = b.wiggle_collider_type
+            ob.wiggle_collider = b.wiggle_collider
+            ob.wiggle_collider_collection = b.wiggle_collider_collection
+            ob.wiggle_radius = b.wiggle_radius
+            ob.wiggle_friction = b.wiggle_friction
+            ob.wiggle_bounce = b.wiggle_bounce
+            ob.wiggle_sticky = b.wiggle_sticky
+            ob.wiggle_chain = b.wiggle_chain
+            
+            ob.wiggle_mass_head = b.wiggle_mass_head
+            ob.wiggle_stiff_head = b.wiggle_stiff_head
+            ob.wiggle_stretch_head = b.wiggle_stretch_head
+            ob.wiggle_damp_head = b.wiggle_damp_head
+            ob.wiggle_gravity_head = b.wiggle_gravity_head
+            ob.wiggle_wind_ob_head = b.wiggle_wind_ob_head
+            ob.wiggle_wind_head = b.wiggle_wind_head
+            ob.wiggle_collider_type_head = b.wiggle_collider_type_head
+            ob.wiggle_collider_head = b.wiggle_collider_head
+            ob.wiggle_collider_collection_head = b.wiggle_collider_collection_head
+            ob.wiggle_radius_head = b.wiggle_radius_head
+            ob.wiggle_friction_head = b.wiggle_friction_head
+            ob.wiggle_bounce_head = b.wiggle_bounce_head
+            ob.wiggle_sticky_head = b.wiggle_sticky_head
+            ob.wiggle_chain_head = b.wiggle_chain_head
         return {'FINISHED'}
 
 class WiggleReset(bpy.types.Operator):
