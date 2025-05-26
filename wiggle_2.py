@@ -180,9 +180,12 @@ def constrain(b):
     # todo collisions here
 
     # constrain length
+    length_elasticity = b.wiggle_length_elasticity * b.wiggle_length_elasticity
+    if b.bone.inherit_scale != "NONE":
+        length_elasticity = 1
     diff = bw.working_position - pw.working_position
     dir = diff.normalized()
-    bw.working_position = bw.working_position.lerp(pw.working_position + dir * lengthToParent, b.wiggle_length_elasticity * b.wiggle_length_elasticity)
+    bw.working_position = bw.working_position.lerp(pw.working_position + dir * lengthToParent, length_elasticity)
 
 @persistent
 def draw_callback():
@@ -361,6 +364,8 @@ def wiggle_post(scene,dg):
                     fixed_anim_position = (b.id_data.matrix_world @ b.matrix).translation
                     b.wiggle.working_position = fixed_anim_position 
                     c = get_child(b)
+                    if not c:
+                        continue
                     b.wiggle.parent_pose = 2 * fixed_anim_position - (c.id_data.matrix_world @ c.matrix).translation
                     b.wiggle.parent_position = b.wiggle.parent_pose
                 else:
@@ -376,7 +381,7 @@ def wiggle_post(scene,dg):
 
                 child = get_child(bone)
                 if not child:
-                    return
+                    continue
 
                 bone_pose = (bone.id_data.matrix_world @ bone.matrix).translation
                 child_pose = (child.id_data.matrix_world @ child.matrix).translation
@@ -388,18 +393,30 @@ def wiggle_post(scene,dg):
                 simulatedVector = (child.wiggle.working_position - bone.wiggle.working_position).normalized()
                 animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector)
                 mat = animPoseToPhysicsPose.to_matrix().to_4x4()
-                #mat.translation = bone.wiggle.working_position-bone_pose
+
+                if bone.bone.inherit_scale == "NONE":
+                    bone_length_change = (child.wiggle.working_position - bone.wiggle.working_position).length / (child_pose - bone_pose).length
+                    scale_adj = Matrix.Scale(bone_length_change, 4, bone.matrix.to_quaternion().inverted() @ cachedAnimatedVector) 
+                else:
+                    scale_adj = IDENTITY_MAT
 
                 p = get_wiggle_parent(bone)
                 if p:
                     loc, rot, scale = bone.matrix.decompose()
-                    new_matrix = Matrix.Translation(loc) @ p.wiggle.matrix.inverted() @ mat @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
+                    decomposed_parent = p.wiggle.matrix.inverted().decompose()
+                    if bone.bone.use_inherit_rotation:
+                        prot = decomposed_parent[1]
+                    else:
+                        prot = Quaternion()
+
+                    new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ mat @ rot.to_matrix().to_4x4() @ scale_adj @ Matrix.Diagonal(scale).to_4x4()
                     bone.matrix = new_matrix
+                    bone.wiggle.matrix = flatten(mat)
                 else:
                     loc, rot, scale = bone.matrix.decompose()
-                    new_matrix = Matrix.Translation(bone.wiggle.working_position) @ mat @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
+                    new_matrix = Matrix.Translation(loc) @ mat @ rot.to_matrix().to_4x4() @ scale_adj @ Matrix.Diagonal(scale).to_4x4()
                     bone.matrix = new_matrix 
-                bone.wiggle.matrix = flatten(mat)
+                    bone.wiggle.matrix = flatten(mat)
     _profiler.disable()
 
 @persistent        
@@ -720,6 +737,7 @@ class WiggleItem(bpy.types.PropertyGroup):
 #store properties for a bone. custom properties for user editable. property group for internal calculations
 class WiggleBone(bpy.types.PropertyGroup):
     matrix: bpy.props.FloatVectorProperty(name = 'Matrix', size=16, subtype = 'MATRIX', override={'LIBRARY_OVERRIDABLE'})
+    scale_adj: bpy.props.FloatVectorProperty(name = 'Matrix', size=16, subtype = 'MATRIX', override={'LIBRARY_OVERRIDABLE'})
     position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     working_position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
@@ -806,7 +824,7 @@ def register():
     )
     bpy.types.PoseBone.wiggle_length_elasticity = bpy.props.FloatProperty(
         name = 'Length Elasticity',
-        description = 'Spring length stiffness, higher means more rigid',
+        description = 'Spring length stiffness, higher means more rigid. Only works if bone, and all its children have inherit scale set to NONE',
         min = 0,
         default = 0.6,
         max=1,
