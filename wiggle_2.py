@@ -237,14 +237,14 @@ def draw_callback_pose():
         
 @persistent
 def wiggle_pre(scene):
-    _profiler.enable()
+    if scene.wiggle_debug: _profiler.enable()
     if (scene.wiggle.lastframe == scene.frame_current and not scene.wiggle.reset) or scene.wiggle.is_rendering:
-        _profiler.disable()
+        if scene.wiggle_debug: _profiler.disable()
         return
 
     if not scene.wiggle_enable:
         reset_scene()
-        _profiler.disable()
+        if scene.wiggle_debug: _profiler.disable()
         return
 
     scene_objects = scene.objects
@@ -254,12 +254,12 @@ def wiggle_pre(scene):
         ob = scene.objects.get(wo.name)
         if not ob:
             build_list()
-            _profiler.disable()
+            if scene.wiggle_debug: _profiler.disable()
             return
 
         if getattr(ob, "wiggle_mute", False) or getattr(ob, "wiggle_freeze", False):
             reset_ob(ob)
-            _profiler.disable()
+            if scene.wiggle_debug: _profiler.disable()
             continue
 
         ob_pose_bones = getattr(ob.pose, "bones", {})
@@ -268,23 +268,20 @@ def wiggle_pre(scene):
             b = ob_pose_bones.get(wb.name)
             if not b:
                 build_list()
-                _profiler.disable()
+                if scene.wiggle_debug: _profiler.disable()
                 return
-            if getattr(b, "wiggle_mute", False) or not (getattr(b, "wiggle_enabled", False)):
-                reset_bone(b)
-                continue
-    _profiler.disable()
+    if scene.wiggle_debug: _profiler.disable()
 
 @persistent                
 def wiggle_post(scene,dg):
-    _profiler.enable()
+    if scene.wiggle_debug: _profiler.enable()
     wiggle = scene.wiggle
 
     if (wiggle.lastframe == scene.frame_current) and not wiggle.reset:
-        _profiler.disable()
+        if scene.wiggle_debug: _profiler.disable()
         return
     if not scene.wiggle_enable or wiggle.is_rendering:
-        _profiler.disable()
+        if scene.wiggle_debug: _profiler.disable()
         return
 
     lastframe = wiggle.lastframe
@@ -294,7 +291,7 @@ def wiggle_post(scene,dg):
 
     if (frame_current == frame_start) and not frame_loop and not frame_is_preroll:
         bpy.ops.wiggle.reset()
-        _profiler.disable()
+        if scene.wiggle_debug: _profiler.disable()
         return
 
     if frame_current >= lastframe:
@@ -328,10 +325,8 @@ def wiggle_post(scene,dg):
 
             pose_bones = ob.pose.bones
             bones = [
-                pose_bones[wb.name]
-                for wb in wo.list
-                if not getattr(pose_bones[wb.name], 'wiggle_mute', False)
-                and (getattr(pose_bones[wb.name], 'wiggle_enabled', False))
+                bone for bone in pose_bones
+                if not getattr(bone, 'wiggle_mute', False) and getattr(bone, 'wiggle_enabled', False)
             ]
             virtualbones = [
                 bone for bone in bones if get_child(bone) is None
@@ -417,7 +412,7 @@ def wiggle_post(scene,dg):
                 new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
                 bone.matrix = new_matrix
                 bone.wiggle.rolling_error = animPoseToPhysicsPose
-    _profiler.disable()
+    if scene.wiggle_debug: _profiler.disable()
 
 @persistent        
 def wiggle_render_pre(scene):
@@ -493,7 +488,7 @@ class WiggleReset(bpy.types.Operator):
 class WiggleProfile(bpy.types.Operator):
     """Reset scene wiggle physics to rest state"""
     bl_idname = "wiggle.profile"
-    bl_label = "Print Profiling Information"
+    bl_label = "Print Profiling Information to Console"
     
     @classmethod
     def poll(cls,context):
@@ -606,13 +601,14 @@ class WIGGLE_PT_Settings(WigglePanel, bpy.types.Panel):
         
     def draw(self,context):
         row = self.layout.row()
+        icon = 'RADIOBUT_OFF' if not context.scene.wiggle_debug else 'RADIOBUT_ON'
+        row.prop(context.scene, "wiggle_debug", icon=icon, text="",emboss=False)
+
         icon = 'HIDE_ON' if not context.scene.wiggle_enable else 'SCENE_DATA'
         row.prop(context.scene, "wiggle_enable", icon=icon, text="",emboss=False)
         if not context.scene.wiggle_enable:
             row.label(text='Scene muted.')
             return
-        icon = 'MOD_OUTLINE' if not context.scene.wiggle_debug else 'HIDE_OFF'
-        row.prop(context.scene, "wiggle_debug", icon=icon, text="",emboss=False)
         if not context.object.type == 'ARMATURE':
             row.label(text = ' Select armature.')
             return
@@ -687,7 +683,7 @@ class WIGGLE_PT_Utilities(WigglePanel,bpy.types.Panel):
             col.operator('wiggle.copy')
             col.operator('wiggle.select')
         col.operator('wiggle.reset')
-        col.operator('wiggle.profile')
+        if context.scene.wiggle_debug: col.operator('wiggle.profile')
         layout.prop(context.scene.wiggle, 'loop')
         
 class WIGGLE_PT_Bake(WigglePanel,bpy.types.Panel):
@@ -761,7 +757,7 @@ def register():
     )
     bpy.types.Scene.wiggle_debug = bpy.props.BoolProperty(
         name = 'Enable Debug',
-        description = 'Enable drawing of wiggle debug on this scene',
+        description = 'Enable drawing of wiggle debug lines. Green is the detected rest pose, red is the simulated physics pose. This is slow so disable when not needed.',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_prop(s, c, 'wiggle_enable')
@@ -812,7 +808,7 @@ def register():
     )
     bpy.types.PoseBone.wiggle_length_elasticity = bpy.props.FloatProperty(
         name = 'Length Elasticity',
-        description = 'Spring length stiffness, higher means more rigid. Only works if bone, and all its children have inherit scale set to NONE',
+        description = 'Spring length stiffness, higher means more rigid.',
         min = 0,
         default = 0.6,
         max=1,
