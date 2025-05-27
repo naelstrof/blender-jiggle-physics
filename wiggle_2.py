@@ -21,7 +21,6 @@ bl_info = {
 import bpy, math
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
-
 import cProfile
 import pstats
 import gpu
@@ -33,6 +32,9 @@ IDENTITY_MAT = Matrix.Identity(4)
 SCALE_MAT = Matrix.Identity(4)
 
 _profiler = cProfile.Profile()
+
+def lerp(a, b, t):
+    return a + (b - a) * t
 
 def is_bone_animated(armature, bone_name):
     anim_data = armature.animation_data
@@ -63,7 +65,7 @@ def reset_ob(ob):
             reset_bone(ob.pose.bones.get(wb.name))
 
 def reset_bone(b):
-    b.wiggle.working_position = b.wiggle.position = b.wiggle.position_last = b.wiggle.virtual_position = b.wiggle.virtual_position_last = (b.id_data.matrix_world @ b.matrix).translation
+    b.wiggle.position = b.wiggle.position_last = b.wiggle.virtual_position = b.wiggle.virtual_position_last = (b.id_data.matrix_world @ b.matrix).translation
 
 def build_list():
     bpy.context.scene.wiggle.list.clear()
@@ -103,12 +105,12 @@ def get_parent(b):
 def get_wiggle_parent(b):
     p = b.parent
     if not p: return None
-    par = p if (p.wiggle_enabled and (not p.wiggle_mute)) else get_wiggle_parent(p)
+    par = p if (p.wiggle_enabled) else get_wiggle_parent(p)
     return par
 
 def get_child(b):
     for child in b.children:
-        if (child.wiggle_enabled and (not child.wiggle_mute)):
+        if (child.wiggle_enabled):
             return child
     return None
 
@@ -181,10 +183,8 @@ def draw_callback():
 
         pose_bones = ob.pose.bones
         bones = [
-            pose_bones[wb.name]
-            for wb in wo.list
-            if not getattr(pose_bones[wb.name], 'wiggle_mute', False)
-            and (getattr(pose_bones[wb.name], 'wiggle_enabled', False))
+            bone
+            for bone in pose_bones if getattr(bone, 'wiggle_enabled', False)
         ]
         coords = []
         for b in bones:
@@ -221,10 +221,8 @@ def draw_callback_pose():
 
         pose_bones = ob.pose.bones
         bones = [
-            pose_bones[wb.name]
-            for wb in wo.list
-            if not getattr(pose_bones[wb.name], 'wiggle_mute', False)
-            and (getattr(pose_bones[wb.name], 'wiggle_enabled', False))
+            bone
+            for bone in pose_bones if getattr(bone, 'wiggle_enabled', False)
         ]
         coords = []
         for b in bones:
@@ -326,7 +324,7 @@ def wiggle_post(scene,dg):
             pose_bones = ob.pose.bones
             bones = [
                 bone for bone in pose_bones
-                if not getattr(bone, 'wiggle_mute', False) and getattr(bone, 'wiggle_enabled', False)
+                if getattr(bone, 'wiggle_enabled', False)
             ]
             virtualbones = [
                 bone for bone in bones if get_child(bone) is None
@@ -334,15 +332,15 @@ def wiggle_post(scene,dg):
             for b in bones: # Do some caching
                 p = get_wiggle_parent(b)
                 if not p:
-                    fixed_anim_position = (b.id_data.matrix_world @ b.matrix).translation
+                    fixed_anim_position = (ob.matrix_world @ b.matrix).translation
                     b.wiggle.working_position = fixed_anim_position 
                     c = get_child(b)
                     if not c:
                         continue
-                    b.wiggle.parent_pose = 2 * fixed_anim_position - (c.id_data.matrix_world @ c.matrix).translation
+                    b.wiggle.parent_pose = 2 * fixed_anim_position - (ob.matrix_world @ c.matrix).translation
                     b.wiggle.parent_position = b.wiggle.parent_pose
                 else:
-                    b.wiggle.parent_pose = (p.id_data.matrix_world @ p.matrix).translation
+                    b.wiggle.parent_pose = (ob.matrix_world @ p.matrix).translation
                     b.wiggle.parent_position = p.wiggle.working_position
             for b in bones:
                 b.wiggle.working_position = verlet_integrate(b.wiggle.position, b.wiggle.position_last, b, get_wiggle_parent(b), dt, dt2, scene.gravity)
@@ -359,15 +357,17 @@ def wiggle_post(scene,dg):
                 child = get_child(bone)
                 if not child:
                     continue
-                bone_pose = (bone.id_data.matrix_world @ bone.matrix).translation
-                child_pose = (child.id_data.matrix_world @ child.matrix).translation
 
-                bone.wiggle.debug = bone_pose
-                child.wiggle.debug = child_pose
+                bone_pose = bone.matrix.translation
+                child_pose = child.matrix.translation
+
+                bone.wiggle.debug = ob.matrix_world@bone_pose
+                child.wiggle.debug = ob.matrix_world@child_pose
 
                 cachedAnimatedVector = (child_pose - bone_pose).normalized()
-                simulatedVector = (child.wiggle.working_position - bone.wiggle.working_position).normalized()
-                animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector)
+                simulatedVector = (ob.matrix_world.inverted()@(child.wiggle.working_position - bone.wiggle.working_position)).normalized()
+                animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(Quaternion(), 1-bone.wiggle_blend).normalized()
+                
 
                 bone.wiggle.bone_length_change = (child.wiggle.working_position - bone.wiggle.working_position).length - (child_pose - bone_pose).length
 
@@ -379,7 +379,7 @@ def wiggle_post(scene,dg):
                     else:
                         prot = Quaternion()
                     dir = (loc - p.matrix.translation).normalized()
-                    loc = loc + dir * p.wiggle.bone_length_change
+                    loc = loc + dir * lerp(0,p.wiggle.bone_length_change, bone.wiggle_blend)
                     new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
                     bone.matrix = new_matrix
                     bone.wiggle.rolling_error = animPoseToPhysicsPose
@@ -392,12 +392,12 @@ def wiggle_post(scene,dg):
                 bone.wiggle.virtual_position_last = bone.wiggle.virtual_position
                 bone.wiggle.virtual_position = bone.wiggle.virtual_working_position
 
-                bone_pose = (bone.id_data.matrix_world @ bone.matrix).translation
-                child_pose = (bone.id_data.matrix_world @ Matrix.Translation(bone.tail)).translation
+                bone_pose = bone.matrix.translation
+                child_pose = bone.tail
 
                 cachedAnimatedVector = (child_pose - bone_pose).normalized()
-                simulatedVector = (bone.wiggle.virtual_working_position - bone.wiggle.working_position).normalized()
-                animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector)
+                simulatedVector = (ob.matrix_world.inverted()@(bone.wiggle.virtual_working_position - bone.wiggle.working_position)).normalized()
+                animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(Quaternion(), 1-bone.wiggle_blend).normalized()
 
                 bone.wiggle.bone_length_change = (bone.wiggle.virtual_working_position - bone.wiggle.working_position).length - (child_pose - bone_pose).length
 
@@ -408,7 +408,7 @@ def wiggle_post(scene,dg):
                 else:
                     prot = Quaternion()
                 dir = (loc - p.matrix.translation).normalized()
-                loc = loc + dir * p.wiggle.bone_length_change
+                loc = loc + dir * lerp(0,p.wiggle.bone_length_change, bone.wiggle_blend)
                 new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
                 bone.matrix = new_matrix
                 bone.wiggle.rolling_error = animPoseToPhysicsPose
@@ -445,7 +445,6 @@ class WiggleCopy(bpy.types.Operator):
         bone = context.active_pose_bone
         for other_bone in context.selected_pose_bones:
             if other_bone == bone: continue
-            other_bone.wiggle_mute = bone.wiggle_mute
             other_bone.wiggle_enabled = bone.wiggle_enabled
             other_bone.wiggle_angle_elasticity = bone.wiggle_angle_elasticity
             other_bone.wiggle_length_elasticity = bone.wiggle_length_elasticity
@@ -625,12 +624,6 @@ class WIGGLE_PT_Settings(WigglePanel, bpy.types.Panel):
         if not context.active_pose_bone:
             row.label(text = ' Select pose bone.')
             return
-#        row.label(icon='TRIA_RIGHT')
-        icon = 'HIDE_ON' if context.active_pose_bone.wiggle_mute else 'BONE_DATA'
-        row.prop(context.active_pose_bone,'wiggle_mute',icon=icon,icon_only=True,invert_checkbox=True,emboss=False)
-        if context.active_pose_bone.wiggle_mute:
-            row.label(text='Bone muted.')
-            return
 
 class WIGGLE_PT_Bone(WigglePanel,bpy.types.Panel):
     bl_label = ''
@@ -639,7 +632,7 @@ class WIGGLE_PT_Bone(WigglePanel,bpy.types.Panel):
     
     @classmethod
     def poll(cls,context):
-        return context.scene.wiggle_enable and context.object and not context.object.wiggle_mute and context.active_pose_bone and not context.active_pose_bone.wiggle_mute
+        return context.scene.wiggle_enable and context.object and not context.object.wiggle_mute and context.active_pose_bone
     
     def draw_header(self,context):
         row=self.layout.row(align=True)
@@ -789,13 +782,6 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         options={'HIDDEN'},
         update=lambda s, c: update_prop(s, c, 'wiggle_enabled')
-    )
-    bpy.types.PoseBone.wiggle_mute = bpy.props.BoolProperty(
-        name = 'Bone Mute',
-        description = "Mute wiggle",
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'wiggle_mute')
     )
     bpy.types.PoseBone.wiggle_angle_elasticity = bpy.props.FloatProperty(
         name = 'Angle Elasticity',
