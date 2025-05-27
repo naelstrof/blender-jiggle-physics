@@ -622,6 +622,58 @@ class WIGGLE_PT_Settings(WigglePanel, bpy.types.Panel):
             row.label(text = ' Select pose bone.')
             return
 
+
+class WIGGLE_OT_no_keyframe_tooltip_operator(bpy.types.Operator):
+    bl_idname = "wiggle.no_keyframes_tooltip"
+    bl_label = "No Rest Pose Detected"
+    bl_description = "Keyframes are used to define the wiggle's rest pose. Please add keyframes to the bones in their rest state. You may safely ignore this warning if you are using actions in the NLA"
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+class WIGGLE_OT_connected_tooltip_operator(bpy.types.Operator):
+    bl_idname = "wiggle.connected_tooltip"
+    bl_label = "Connected Bone Detected"
+    bl_description = "Connected bones ignore length elasticity, preventing them from stretching. Click this button to automatically fix"
+
+    @classmethod
+    def poll(cls,context):
+        return context.object and context.active_pose_bone
+
+    def execute(self, context):
+        obj = context.object
+        previous_mode = obj.mode
+        bpy.ops.object.mode_set(mode='EDIT')
+        for pose_bone in obj.pose.bones:
+            if not pose_bone.bone.select:
+                continue
+            edit_bone = obj.data.edit_bones.get(pose_bone.name)
+            if edit_bone is None:
+                continue
+            if edit_bone.parent:
+                edit_bone.use_connect = False
+
+        bpy.ops.object.mode_set(mode=previous_mode)
+        return {'FINISHED'}
+
+class WIGGLE_OT_constraints_tooltip_operator(bpy.types.Operator):
+    bl_idname = "wiggle.constraints_tooltip"
+    bl_label = "Constraints Detected"
+    bl_description = "Constraints are applied after wiggle, which can cause strange behavior. Click this button to automatically disable constraints on selected bones"
+
+    @classmethod
+    def poll(cls,context):
+        return context.object and context.active_pose_bone
+
+    def execute(self, context):
+        obj = context.object
+        for pose_bone in obj.pose.bones:
+            if not pose_bone.bone.select:
+                continue
+            for constraint in pose_bone.constraints:
+                constraint.enabled = False
+        return {'FINISHED'}
+
 class WIGGLE_PT_Bone(WigglePanel,bpy.types.Panel):
     bl_label = ''
     bl_parent_id = 'WIGGLE_PT_Settings'
@@ -649,13 +701,13 @@ class WIGGLE_PT_Bone(WigglePanel,bpy.types.Panel):
         
         col = layout.column(align=True)
         if not is_bone_animated(b.id_data, b.name):
-            layout.label(text='Missing keyframes. Proper wiggle relies on animations resetting to a "rest pose".', icon='ERROR')
+            layout.operator(WIGGLE_OT_no_keyframe_tooltip_operator.bl_idname, icon='ERROR')
         for c in b.constraints:
             if c.enabled:
-                layout.label(text='Detected constraints. Constraints are applied after wiggles, which can cause really strange behavior.', icon='ERROR')
+                layout.operator(WIGGLE_OT_constraints_tooltip_operator.bl_idname, icon='ERROR')
                 break
         if b.bone.use_connect:
-            layout.label(text='Connected bones ignore length elasticity.', icon='ERROR')
+            layout.operator(WIGGLE_OT_connected_tooltip_operator.bl_idname, icon='ERROR')
         drawprops(col,b,['wiggle_angle_elasticity', 'wiggle_length_elasticity', 'wiggle_elasticity_soften', 'wiggle_gravity', 'wiggle_blend', 'wiggle_air_drag', 'wiggle_friction'])
             
 
@@ -797,7 +849,7 @@ def register():
         name = 'Length Elasticity',
         description = 'Spring length stiffness, higher means more rigid.',
         min = 0,
-        default = 0.6,
+        default = 0.8,
         max=1,
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_prop(s, c, 'wiggle_length_elasticity')
@@ -865,6 +917,9 @@ def register():
     bpy.utils.register_class(WIGGLE_PT_Bone)
     bpy.utils.register_class(WIGGLE_PT_Utilities)
     bpy.utils.register_class(WIGGLE_PT_Bake)
+    bpy.utils.register_class(WIGGLE_OT_no_keyframe_tooltip_operator)
+    bpy.utils.register_class(WIGGLE_OT_connected_tooltip_operator)
+    bpy.utils.register_class(WIGGLE_OT_constraints_tooltip_operator)
     
     bpy.app.handlers.frame_change_pre.append(wiggle_pre)
     bpy.app.handlers.frame_change_post.append(wiggle_post)
@@ -890,6 +945,9 @@ def unregister():
     bpy.utils.unregister_class(WIGGLE_PT_Bone)
     bpy.utils.unregister_class(WIGGLE_PT_Utilities)
     bpy.utils.unregister_class(WIGGLE_PT_Bake)
+    bpy.utils.unregister_class(WIGGLE_OT_no_keyframe_tooltip_operator)
+    bpy.utils.unregister_class(WIGGLE_OT_connected_tooltip_operator)
+    bpy.utils.unregister_class(WIGGLE_OT_constraints_tooltip_operator)
     
     bpy.app.handlers.frame_change_pre.remove(wiggle_pre)
     bpy.app.handlers.frame_change_post.remove(wiggle_post)
