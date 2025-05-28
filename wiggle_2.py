@@ -40,55 +40,25 @@ def flatten(mat):
     return [mat[j][i] for i in range(4) for j in range(4)]
 
 def reset_scene():
-    print("reset scene")
-    for wo in bpy.context.scene.wiggle.list:
-        reset_ob(bpy.data.objects.get(wo.name))
+    wiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable]
+    for ob in wiggle_objs:
+        reset_ob(ob)
                               
 def reset_ob(ob):
-    print("reset ob")
-    if not ob or not hasattr(ob, 'pose') or not hasattr(ob.pose, 'bones'):
-        return
-    wo = bpy.context.scene.wiggle.list.get(ob.name)
-    if not wo:
-        return
-    for wb in wo.list:
-        bone = ob.pose.bones.get(wb.name)
-        if bone:
-            reset_bone(ob.pose.bones.get(wb.name))
+    wiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
+    for bone in wiggle_bones:
+        reset_bone(bone)
 
 def reset_bone(b):
     b.wiggle.position = b.wiggle.position_last = b.wiggle.virtual_position = b.wiggle.virtual_position_last = (b.id_data.matrix_world @ b.matrix).translation
-
-def build_list():
-    bpy.context.scene.wiggle.list.clear()
-    for ob in bpy.context.scene.objects:
-        if ob.type != 'ARMATURE': continue
-        wigglebones = []
-        for b in ob.pose.bones:
-            wigglebones.append(b)
-                
-        if not wigglebones:
-            ob.wiggle_enable = False
-            continue
-        
-        ob.wiggle_enable = True
-        wo = bpy.context.scene.wiggle.list.add()
-        wo.name = ob.name
-        for b in wigglebones:
-            wb = wo.list.add()
-            wb.name = b.name
         
 def update_prop(self,context,prop): 
-    if prop in ['wiggle_enable']:
-        build_list()
     if type(self) == bpy.types.PoseBone: 
         for b in context.selected_pose_bones:
             b[prop] = self[prop]
         if prop in ['wiggle_enabled']:
-            build_list()
             for b in context.selected_pose_bones:
                 reset_bone(b)
-    #edge case where is_rendering gets stuck, the user fiddling with any setting should unstuck it!
     context.scene.wiggle.is_rendering = False
         
 def get_parent(b):
@@ -158,25 +128,9 @@ def constrain(bone_pose_world, b, p, working_position):
 def draw_callback():
     if not bpy.context.scene.wiggle_enable or not bpy.context.scene.wiggle_debug:
         return
-    wiggle = bpy.context.scene.wiggle
-    wiggle_list = wiggle.list
-    if not wiggle_list:
-        return
-    objects = bpy.context.scene.objects
-    for wo in wiggle_list:
-        ob = objects.get(wo.name)
-
-        if not ob:
-            continue
-
-        if getattr(ob, 'wiggle_mute', False) or getattr(ob, 'wiggle_freeze', False):
-            continue
-
-        pose_bones = ob.pose.bones
-        bones = [
-            bone
-            for bone in pose_bones if getattr(bone, 'wiggle_enabled', False)
-        ]
+    wiggle_objs = [obj for obj in bpy.context.scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute and not obj.wiggle_freeze]
+    for ob in wiggle_objs:
+        bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
         coords = []
         for b in bones:
             p = get_wiggle_parent(b)
@@ -194,25 +148,9 @@ def draw_callback():
 def draw_callback_pose():
     if not bpy.context.scene.wiggle_enable or not bpy.context.scene.wiggle_debug:
         return
-    wiggle = bpy.context.scene.wiggle
-    wiggle_list = wiggle.list
-    if not wiggle_list:
-        return
-    objects = bpy.context.scene.objects
-    for wo in wiggle_list:
-        ob = objects.get(wo.name)
-
-        if not ob:
-            continue
-
-        if getattr(ob, 'wiggle_mute', False) or getattr(ob, 'wiggle_freeze', False):
-            continue
-
-        pose_bones = ob.pose.bones
-        bones = [
-            bone
-            for bone in pose_bones if getattr(bone, 'wiggle_enabled', False)
-        ]
+    wiggle_objs = [obj for obj in bpy.context.scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute and not obj.wiggle_freeze]
+    for ob in wiggle_objs:
+        bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
         coords = []
         for b in bones:
             draw_apply_pose(b, get_child(b), coords)
@@ -234,29 +172,6 @@ def wiggle_pre(scene):
         if scene.wiggle_debug: _profiler.disable()
         return
 
-    scene_objects = scene.objects
-    scene_collection = scene.collection
-
-    for wo in scene.wiggle.list:
-        ob = scene.objects.get(wo.name)
-        if not ob:
-            build_list()
-            if scene.wiggle_debug: _profiler.disable()
-            return
-
-        if getattr(ob, "wiggle_mute", False) or getattr(ob, "wiggle_freeze", False):
-            reset_ob(ob)
-            if scene.wiggle_debug: _profiler.disable()
-            continue
-
-        ob_pose_bones = getattr(ob.pose, "bones", {})
-
-        for wb in wo.list:
-            b = ob_pose_bones.get(wb.name)
-            if not b:
-                build_list()
-                if scene.wiggle_debug: _profiler.disable()
-                return
     if scene.wiggle_debug: _profiler.disable()
 
 
@@ -330,7 +245,6 @@ def apply_pose(ob, bones, virtualbones):
 def wiggle_post(scene,dg):
     if scene.wiggle_debug: _profiler.enable()
     wiggle = scene.wiggle
-    wiggle_list = wiggle.list
     objects = scene.objects
 
     if not scene.wiggle_enable or wiggle.is_rendering:
@@ -338,23 +252,10 @@ def wiggle_post(scene,dg):
         return
 
     if (wiggle.lastframe == scene.frame_current) and not wiggle.reset:
-        for wo in wiggle_list:
-            ob = objects.get(wo.name)
-
-            if not ob:
-                continue
-
-            if getattr(ob, 'wiggle_mute', False) or getattr(ob, 'wiggle_freeze', False):
-                continue
-
-            pose_bones = ob.pose.bones
-            bones = [
-                bone for bone in pose_bones
-                if getattr(bone, 'wiggle_enabled', False)
-            ]
-            virtualbones = [
-                bone for bone in bones if get_child(bone) is None
-            ]
+        wiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute and not obj.wiggle_freeze]
+        for ob in wiggle_objs:
+            bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
+            virtualbones = [bone for bone in bones if get_child(bone) is None]
             apply_pose(ob, bones, virtualbones)
         if scene.wiggle_debug: _profiler.disable()
         return
@@ -384,23 +285,10 @@ def wiggle_post(scene,dg):
     dt2 = dt*dt
     accumulatedFrames = frames_elapsed
 
-    for wo in wiggle_list:
-        ob = objects.get(wo.name)
-
-        if not ob:
-            continue
-
-        if getattr(ob, 'wiggle_mute', False) or getattr(ob, 'wiggle_freeze', False):
-            continue
-
-        pose_bones = ob.pose.bones
-        bones = [
-            bone for bone in pose_bones
-            if getattr(bone, 'wiggle_enabled', False)
-        ]
-        virtualbones = [
-            bone for bone in bones if get_child(bone) is None
-        ]
+    wiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute and not obj.wiggle_freeze]
+    for ob in wiggle_objs:
+        bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
+        virtualbones = [bone for bone in bones if get_child(bone) is None]
         for _ in range(accumulatedFrames):
             for b in bones: # Do some caching
                 p = get_wiggle_parent(b)
@@ -456,7 +344,6 @@ def wiggle_render_cancel(scene):
     
 @persistent
 def wiggle_load(scene):
-    build_list()
     s = bpy.context.scene
     s.wiggle.is_rendering = False
             
@@ -467,7 +354,7 @@ class WiggleCopy(bpy.types.Operator):
     
     @classmethod
     def poll(cls,context):
-        return context.mode in ['POSE'] and context.active_pose_bone and (len(context.selected_pose_bones)>1)
+        return context.mode in ['POSE'] and context.active_pose_bone and (len(context.selected_pose_bones)>1) and getattr(context.active_pose_bone, "wiggle_enabled", False)
     
     def execute(self,context):
         bone = context.active_pose_bone
@@ -496,20 +383,12 @@ class WiggleReset(bpy.types.Operator):
         context.scene.wiggle.reset = True
         context.scene.frame_set(context.scene.frame_current)
         context.scene.wiggle.reset = False
-        rebuild = False
-        for wo in context.scene.wiggle.list:
-            ob = context.scene.objects.get(wo.name)
-            if not ob:
-                rebuild = True
-                continue
-            for wb in wo.list:
-                b = ob.pose.bones.get(wb.name)
-                if not b:
-                    rebuild = True
-                    continue
-                reset_bone(b)
+        wiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute]
+        for ob in wiggle_objs:
+            wiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
+            for bone in wiggle_bones:
+                reset_bone(bone)
         context.scene.wiggle.lastframe = context.scene.frame_current
-        if rebuild: build_list()
         return {'FINISHED'}
 
 class WiggleProfile(bpy.types.Operator):
@@ -536,21 +415,11 @@ class WiggleSelect(bpy.types.Operator):
     
     def execute(self,context):
         bpy.ops.pose.select_all(action='DESELECT')
-        rebuild = False
-        for wo in context.scene.wiggle.list:
-            ob = context.scene.objects.get(wo.name)
-            if not ob:
-                rebuild = True
-                continue
-            for wb in wo.list:
-                b = ob.pose.bones.get(wb.name)
-                if not b:
-                    rebuild = True
-                    continue
-                if not b.wiggle_enabled:
-                    continue
-                b.bone.select = True
-        if rebuild: build_list()
+        wiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.wiggle_enable and not obj.wiggle_mute]
+        for ob in wiggle_objs:
+            wiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'wiggle_enabled', False)]
+            for bone in wiggle_bones:
+                bone.bone.select = True
         return {'FINISHED'}
     
 class WiggleBake(bpy.types.Operator):
@@ -781,13 +650,6 @@ class WIGGLE_PT_Bake(WigglePanel,bpy.types.Panel):
         row.enabled = not context.scene.wiggle.bake_overwrite
         row.prop(context.scene.wiggle, 'bake_nla')
         layout.operator('wiggle.bake')
-        
-class WiggleBoneItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(override={'LIBRARY_OVERRIDABLE'})
-    
-class WiggleItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(override={'LIBRARY_OVERRIDABLE'})  
-    list: bpy.props.CollectionProperty(type=WiggleBoneItem, override={'LIBRARY_OVERRIDABLE','USE_INSERTION'})    
 
 class WiggleBone(bpy.types.PropertyGroup):
     rolling_error: bpy.props.FloatVectorProperty(size=4, subtype='QUATERNION', override={'LIBRARY_OVERRIDABLE'})
@@ -802,13 +664,9 @@ class WiggleBone(bpy.types.PropertyGroup):
     virtual_position_last: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     debug: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     
-class WiggleObject(bpy.types.PropertyGroup):
-    list: bpy.props.CollectionProperty(type=WiggleItem, override={'LIBRARY_OVERRIDABLE'})
-    
 class WiggleScene(bpy.types.PropertyGroup):
     lastframe: bpy.props.IntProperty()
     loop: bpy.props.BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=True)
-    list: bpy.props.CollectionProperty(type=WiggleItem, override={'LIBRARY_OVERRIDABLE','USE_INSERTION'})
     preroll: bpy.props.IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=0)
     is_preroll: bpy.props.BoolProperty(default=False)
     bake_overwrite: bpy.props.BoolProperty(name='Overwrite Current Action', description='Bake wiggle into current action, instead of creating a new one', default = False)
@@ -929,12 +787,8 @@ def register():
     )
     
     #internal variables
-    bpy.utils.register_class(WiggleBoneItem)
-    bpy.utils.register_class(WiggleItem)
     bpy.utils.register_class(WiggleBone)
     bpy.types.PoseBone.wiggle = bpy.props.PointerProperty(type=WiggleBone, override={'LIBRARY_OVERRIDABLE'})
-    bpy.utils.register_class(WiggleObject)
-    bpy.types.Object.wiggle = bpy.props.PointerProperty(type=WiggleObject, override={'LIBRARY_OVERRIDABLE'})
     bpy.utils.register_class(WiggleScene)
     bpy.types.Scene.wiggle = bpy.props.PointerProperty(type=WiggleScene, override={'LIBRARY_OVERRIDABLE'})
     
@@ -961,10 +815,7 @@ def register():
 def unregister():
     global debug_handler
     global debug_handler2
-    bpy.utils.unregister_class(WiggleBoneItem)
-    bpy.utils.unregister_class(WiggleItem)
     bpy.utils.unregister_class(WiggleBone)
-    bpy.utils.unregister_class(WiggleObject)
     bpy.utils.unregister_class(WiggleScene)
     bpy.utils.unregister_class(WiggleReset)
     bpy.utils.unregister_class(WiggleProfile)
