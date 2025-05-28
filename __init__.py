@@ -482,7 +482,7 @@ class JigglePanel:
         return context.object  
 
 class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
-    bl_label = __package__
+    bl_label = "Jiggle Physics"
         
     def draw(self,context):
         row = self.layout.row()
