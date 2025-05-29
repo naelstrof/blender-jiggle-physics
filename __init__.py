@@ -215,7 +215,7 @@ def apply_pose(ob, bones, virtualbones):
         if not p:
             continue
         cachedAnimatedVector = (child_pose - bone_pose).normalized()
-        simulatedVector = (ob.matrix_world.inverted()@(bone.jiggle.virtual_working_position - bone.jiggle.working_position)).normalized()
+        simulatedVector = ((ob.matrix_world.inverted()@bone.jiggle.virtual_working_position) - (ob.matrix_world.inverted()@bone.jiggle.working_position)).normalized()
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(Quaternion(), 1-bone.jiggle_blend).normalized()
 
         loc, rot, scale = bone.matrix.decompose()
