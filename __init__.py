@@ -126,6 +126,12 @@ def draw_callback():
         for b in bones:
             p = get_jiggle_parent(b)
             if not p:
+                coords.append(b.jiggle.root_position)
+                coords.append(b.jiggle.working_position)
+                c = get_child(b)
+                if not c:
+                    coords.append(b.jiggle.working_position)
+                    coords.append(b.jiggle.virtual_working_position)
                 continue
             coords.append(p.jiggle.working_position)
             coords.append(b.jiggle.working_position)
@@ -169,26 +175,33 @@ def jiggle_pre(scene):
 def apply_pose(ob, bones, virtualbones):
     for bone in bones:
         child = get_child(bone)
-        if not child:
-            continue
+        p = get_jiggle_parent(bone)
+        if child:
+            bone_pose = bone.matrix.translation
+            child_pose = child.matrix.translation
 
-        bone_pose = bone.matrix.translation
-        child_pose = child.matrix.translation
+            bw = bone.jiggle
+            cw = child.jiggle
+            child_working_position = cw.working_position
+            if bpy.context.scene.jiggle_debug:
+                bw.debug = ob.matrix_world@bone_pose
+                cw.debug = ob.matrix_world@child_pose
+        else:
+            bone_pose = bone.matrix.translation
+            child_pose = bone.tail
 
-        bw = bone.jiggle
-        cw = child.jiggle
+            bw = bone.jiggle
+            child_working_position = bw.virtual_working_position
+            if bpy.context.scene.jiggle_debug:
+                bw.debug = ob.matrix_world@bone_pose
 
-        if bpy.context.scene.jiggle_debug:
-            bw.debug = ob.matrix_world@bone_pose
-            cw.debug = ob.matrix_world@child_pose
 
         cachedAnimatedVector = (child_pose - bone_pose).normalized()
-        simulatedVector = ((ob.matrix_world.inverted()@cw.working_position) - (ob.matrix_world.inverted()@bw.working_position)).normalized()
+        simulatedVector = ((ob.matrix_world.inverted()@child_working_position) - (ob.matrix_world.inverted()@bw.working_position)).normalized()
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-bone.jiggle_blend).normalized()
 
-        bone.jiggle.bone_length_change = (cw.working_position - bw.working_position).length - (child_pose - bone_pose).length
+        bone.jiggle.bone_length_change = (child_working_position - bw.working_position).length - (child_pose - bone_pose).length
 
-        p = get_jiggle_parent(bone)
         if p:
             loc, rot, scale = bone.matrix.decompose()
             if bone.bone.use_inherit_rotation:
@@ -201,7 +214,7 @@ def apply_pose(ob, bones, virtualbones):
             bone.matrix = new_matrix
             bw.rolling_error = animPoseToPhysicsPose
         else:
-            diff = (ob.matrix_world.inverted()@bw.working_position)-(ob.matrix_world.inverted()@bw.virtual_working_position)
+            diff = (ob.matrix_world.inverted()@bw.working_position)-(ob.matrix_world.inverted()@bw.root_position)
             diff = diff.lerp(ZERO_VEC, 1-bone.jiggle_blend)
             loc, rot, scale = bone.matrix.decompose()
             new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
@@ -285,12 +298,14 @@ def jiggle_post(scene,dg):
                 if not p: # root bone caching
                     fixed_anim_position = (ob.matrix_world @ b.matrix).translation
                     # kinda hacky, I store the desired position of the root bone in the virtual working position.
-                    b.jiggle.virtual_working_position = fixed_anim_position
+                    b.jiggle.root_position = fixed_anim_position
                     c = get_child(b)
                     if not c:
-                        continue
-                    b.jiggle.parent_pose = 2 * fixed_anim_position - (ob.matrix_world @ c.matrix).translation
-                    b.jiggle.parent_position = b.jiggle.parent_pose
+                        b.jiggle.parent_pose = 2 * fixed_anim_position - (ob.matrix_world @ b.tail)
+                        b.jiggle.parent_position = b.jiggle.parent_pose
+                    else:
+                        b.jiggle.parent_pose = 2 * fixed_anim_position - (ob.matrix_world @ c.head)
+                        b.jiggle.parent_position = b.jiggle.parent_pose
                 else:
                     b.jiggle.parent_pose = (ob.matrix_world @ p.matrix).translation
                     b.jiggle.parent_position = p.jiggle.working_position
@@ -300,7 +315,7 @@ def jiggle_post(scene,dg):
                 if p:
                     b.jiggle.working_position = verlet_integrate(b, b.jiggle.position, b.jiggle.position_last, p.jiggle.position, p.jiggle.position_last, dt, dt2, scene.gravity)
                 else: # root bone verlet, we treat the virtual position as the desired position motion
-                    b.jiggle.working_position = verlet_integrate(b, b.jiggle.position, b.jiggle.position_last, b.jiggle.virtual_position, b.jiggle.virtual_position_last, dt, dt2, scene.gravity)
+                    b.jiggle.working_position = verlet_integrate(b, b.jiggle.position, b.jiggle.position_last, b.jiggle.root_position, b.jiggle.root_position_last, dt, dt2, scene.gravity)
             for b in virtualbones: # virtual bones are just tips, we use the bone itself as the parent.
                 b.jiggle.virtual_working_position = verlet_integrate(b, b.jiggle.virtual_position, b.jiggle.virtual_position_last, b.jiggle.position, b.jiggle.position_last, dt, dt2, scene.gravity)
 
@@ -309,12 +324,19 @@ def jiggle_post(scene,dg):
                 if pw:
                     b.jiggle.working_position = constrain((ob.matrix_world @ b.matrix).translation, b, pw, b.jiggle.working_position)
                 else:
-                    b.jiggle.working_position = constrain_length(b, b.jiggle.working_position, b.jiggle.virtual_working_position, 0)
+                    b.jiggle.working_position = constrain_length(b, b.jiggle.working_position, b.jiggle.root_position, 0)
             for b in virtualbones:
                 pw = get_jiggle_parent(b)
                 if pw:
-                    b.jiggle.virtual_working_position = constrain((ob.matrix_world @ Matrix.Translation(b.tail)).translation, b, pw, b.jiggle.virtual_working_position)
+                    b.jiggle.virtual_working_position = constrain(ob.matrix_world @ b.tail, b, pw, b.jiggle.virtual_working_position)
+                else:
+                    pose_diff = (ob.matrix_world@b.tail)-(ob.matrix_world@b.head)
+                    pose_length = pose_diff.length
+                    b.jiggle.virtual_working_position = b.jiggle.virtual_working_position.lerp(pose_diff+b.jiggle.working_position, b.jiggle_angle_elasticity * b.jiggle_angle_elasticity)
+                    real_diff = b.jiggle.virtual_working_position - b.jiggle.working_position
+                    b.jiggle.virtual_working_position = b.jiggle.working_position + real_diff.normalized() * pose_length
             for b in bones:
+                b.jiggle.root_position_last = b.jiggle.root_position
                 b.jiggle.virtual_position_last = b.jiggle.virtual_position
                 b.jiggle.virtual_position = b.jiggle.virtual_working_position
                 b.jiggle.position_last = b.jiggle.position
@@ -672,6 +694,8 @@ class JiggleBone(bpy.types.PropertyGroup):
     parent_position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     parent_pose: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     bone_length_change: bpy.props.FloatProperty(override={'LIBRARY_OVERRIDABLE'})
+    root_position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    root_position_last: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     virtual_working_position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     virtual_position: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     virtual_position_last: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
