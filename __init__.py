@@ -202,6 +202,7 @@ def apply_pose(ob, bones, virtualbones):
             bw.rolling_error = animPoseToPhysicsPose
         else:
             diff = (ob.matrix_world.inverted()@bw.working_position)-(ob.matrix_world.inverted()@bw.virtual_working_position)
+            diff = diff.lerp(ZERO_VEC, 1-bone.jiggle_blend)
             loc, rot, scale = bone.matrix.decompose()
             new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
             bone.matrix = new_matrix 
