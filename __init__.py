@@ -39,7 +39,7 @@ class VirtualParticle:
                 self.position = bone.jiggle.position2.copy()
                 self.position_last = bone.jiggle.position_last2.copy()
                 self.working_position = bone.jiggle.working_position2.copy()
-                self.debug = bone.jiggle.debug2
+                self.debug = bone.jiggle.debug2.copy()
                 self.pose = (self.obj_world_matrix@bone.tail)
 
     def set_parent(self, parent):
@@ -92,9 +92,11 @@ class VirtualParticle:
             parent_aim = (self.parent.working_position - self.parent.parent_pose).normalized()
         else:
             parent_aim = (self.parent.working_position - self.parent.parent.working_position).normalized()
+
+        current_length = (self.working_position - self.parent.working_position).length
         from_to_rot = parent_aim_pose.rotation_difference(parent_aim)
-        current_pose = self.pose - self.parent_pose
-        constraintTarget = from_to_rot @ current_pose
+        current_pose_dir = (self.pose - self.parent_pose).normalized()
+        constraintTarget = from_to_rot @ (current_pose_dir * current_length)
 
         error = (self.working_position - (self.parent.working_position + constraintTarget)).length
         error /= self.desired_length_to_parent
@@ -135,12 +137,12 @@ class VirtualParticle:
 
         self.bone_length_change = (local_child_working_position - local_working_position).length - (local_child_pose - local_pose).length
 
+        if not self.parent:
+            return
+
         cachedAnimatedVector = (local_child_pose - local_pose).normalized()
         simulatedVector = (local_child_working_position - local_working_position).normalized()
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.bone.jiggle_blend).normalized()
-
-        if not self.parent:
-            return
 
         if self.parent.parent:
             loc, rot, scale = self.bone.matrix.decompose()
