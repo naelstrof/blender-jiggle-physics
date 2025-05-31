@@ -82,7 +82,59 @@ class VirtualParticle:
         velocity = delta - local_space_velocity
         self.working_position = self.position + velocity * (1.0-self.bone.jiggle_air_drag) + local_space_velocity * (1.0-self.bone.jiggle_friction) + gravity * self.bone.jiggle_gravity * dt2
 
-    def constrain(self):
+
+    def mesh_collide(self, collider, depsgraph):
+        collider_matrix = collider.matrix_world
+        local_working_position = collider_matrix.inverted() @ self.working_position
+        result, local_location, local_normal, _ = collider.closest_point_on_mesh(local_working_position, depsgraph=depsgraph)
+        if not result:
+            return
+        location = collider_matrix @ local_location
+        normal = collider_matrix.to_quaternion() @ local_normal
+        diff = self.working_position-location
+        if (diff).length > self.bone.jiggle_collision_radius:
+            return
+        self.working_position = location + diff.normalized() * self.bone.jiggle_collision_radius
+
+    def empty_collide(self, collider):
+        collider_matrix = collider.matrix_world
+
+        world_vec = (self.working_position-collider_matrix.translation).normalized()*self.bone.jiggle_collision_radius;
+        local_vec = collider_matrix.inverted().to_3x3() @ world_vec
+
+        local_working_position = collider_matrix.inverted() @ self.working_position
+        local_radius = local_vec.length
+
+        diff = local_working_position
+        empty_radius = 1.0
+        if diff.length-local_radius > empty_radius:
+            return
+        local_working_position = diff.normalized() * (empty_radius+local_radius)
+        self.working_position = collider_matrix @ local_working_position
+
+    def solve_collisions(self, depsgraph):
+        if not self.bone.jiggle_collider_type:
+            return
+
+        if self.bone.jiggle_collider_type == 'Object':
+            collider = self.bone.jiggle_collider
+            if not collider:
+                return
+            if collider.type == 'MESH':
+                self.mesh_collide(collider, depsgraph)
+            if collider.type == 'EMPTY':
+                self.empty_collide(collider)
+        else:
+            collider_collection = self.bone.jiggle_collider_collection
+            if not collider_collection:
+                return
+            for collider in collider_collection.objects:
+                if collider.type == 'MESH':
+                    self.mesh_collide(collider, depsgraph)
+                if collider.type == 'EMPTY':
+                    self.empty_collide(collider)
+
+    def constrain(self, depsgraph):
         if not self.parent:
             return
 
@@ -104,7 +156,8 @@ class VirtualParticle:
         error = pow(error, self.bone.jiggle_elasticity_soften*self.bone.jiggle_elasticity_soften)
         self.working_position = self.working_position.lerp(self.parent.working_position + constraintTarget, self.bone.jiggle_angle_elasticity * self.bone.jiggle_angle_elasticity * error)
 
-        # todo collisions here
+        # collisions
+        self.solve_collisions(depsgraph)
 
         # constrain length
         length_elasticity = self.bone.jiggle_length_elasticity * self.bone.jiggle_length_elasticity
@@ -251,18 +304,35 @@ def draw_apply_pose(bone,child,coords):
     coords.append(bone.jiggle.debug)
     coords.append(child.jiggle.debug)
 
+def billboard_circle(verts, center, radius, segments=32):
+    rv3d = bpy.context.region_data
+    view_matrix = rv3d.view_matrix
+    inv_view = view_matrix.inverted()
+    right = inv_view.col[0].xyz.normalized()
+    up = inv_view.col[1].xyz.normalized()
+    for i in range(segments):
+        angle = 2 * math.pi * i / segments
+        dir_vec = math.cos(angle) * right + math.sin(angle) * up
+        verts.append(center + dir_vec * radius)
+        next_angle = 2 * math.pi * ((i + 1) % segments) / segments
+        next_dir_vec = math.cos(next_angle) * right + math.sin(next_angle) * up
+        verts.append(center + next_dir_vec * radius)
+
 @persistent
 def draw_callback():
     if not bpy.context.scene.jiggle_enable or not bpy.context.scene.jiggle_debug:
         return
     virtual_particles = get_virtual_particles(bpy.context.scene)
-    coords = []
+    verts = []
     for particle in virtual_particles:
         if particle.parent:
-            coords.append(particle.parent.working_position)
-            coords.append(particle.working_position)
+            verts.append(particle.parent.working_position)
+            verts.append(particle.working_position)
+    for particle in virtual_particles:
+        if particle.parent and particle.bone.jiggle_collider:
+            billboard_circle(verts, particle.working_position, particle.bone.jiggle_collision_radius)
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    batch = batch_for_shader(shader, 'LINES', {"pos": coords})
+    batch = batch_for_shader(shader, 'LINES', {"pos": verts})
     shader.bind()
     shader.uniform_float("color", (1, 0, 0, 1))
     batch.draw(shader)
@@ -299,7 +369,7 @@ def jiggle_pre(scene):
 
 
 @persistent                
-def jiggle_post(scene,dg):
+def jiggle_post(scene,depsgraph):
     if scene.jiggle_debug: _profiler.enable()
     jiggle = scene.jiggle
     objects = scene.objects
@@ -345,13 +415,16 @@ def jiggle_post(scene,dg):
         for particle in virtual_particles:
             particle.verlet_integrate(dt2, scene.gravity)
         for particle in virtual_particles:
-            particle.constrain()
+            particle.constrain(depsgraph)
         for particle in virtual_particles:
             particle.finish_step()
     for particle in virtual_particles:
         particle.apply_pose()
         particle.write()
     if scene.jiggle_debug: _profiler.disable()
+
+def collider_poll(self, object):
+    return object.type == 'MESH' or object.type == 'EMPTY'
 
 @persistent        
 def jiggle_render_pre(scene):
@@ -595,6 +668,18 @@ class JIGGLE_OT_connected_tooltip_operator(bpy.types.Operator):
         bpy.ops.object.mode_set(mode=previous_mode)
         return {'FINISHED'}
 
+class JIGGLE_OT_mesh_collision_tooltip_operator(bpy.types.Operator):
+    bl_idname = "jiggle.mesh_collision_tooltip"
+    bl_label = "Mesh Collision Detected"
+    bl_description = "Meshes are not convex, making them bad for collisions. Please use Empty spheres instead (Add -> Empty -> Sphere)"
+
+    @classmethod
+    def poll(cls,context):
+        return context.object and context.active_pose_bone
+
+    def execute(self, context):
+        return {'FINISHED'}
+
 class JIGGLE_OT_constraints_tooltip_operator(bpy.types.Operator):
     bl_idname = "jiggle.constraints_tooltip"
     bl_label = "Constraints Detected"
@@ -639,6 +724,40 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
                 layout.prop(b, p)
         
         col = layout.column(align=True)
+        drawprops(col,b,['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction'])
+        col.separator()
+        collision = False
+        col.prop(b, 'jiggle_collider_type',text='Collisions')
+        if b.jiggle_collider_type == 'Object':
+            row = col.row(align=True)
+            row.prop_search(b, 'jiggle_collider', context.scene, 'objects',text=' ')
+            if b.jiggle_collider:
+                if b.jiggle_collider.name in context.scene.objects:
+                    collision = True
+                else:
+                    row.label(text='',icon='UNLINKED')
+        else:
+            row = col.row(align=True)
+            row.prop_search(b, 'jiggle_collider_collection', bpy.data, 'collections', text=' ')
+            if b.jiggle_collider_collection:
+                if b.jiggle_collider_collection in context.scene.collection.children_recursive:
+                    collision = True
+                else:
+                    row.label(text='',icon='UNLINKED')
+            
+        if collision:
+            col = layout.column(align=True)
+            drawprops(col,b,['jiggle_collision_radius'])
+            if b.jiggle_collider_type == 'Object':
+                if b.jiggle_collider.type == 'MESH':
+                    col.separator()
+                    col.operator(JIGGLE_OT_mesh_collision_tooltip_operator.bl_idname, icon='ERROR')
+            else:
+                for collider in b.jiggle_collider_collection.objects:
+                    if collider.type == 'MESH':
+                        col.separator()
+                        col.operator(JIGGLE_OT_mesh_collision_tooltip_operator.bl_idname, icon='ERROR')
+                        break
         layout.operator(JiggleClearKeyframes.bl_idname)
         if not is_bone_animated(b.id_data, b.name):
             layout.operator(JIGGLE_OT_no_keyframe_tooltip_operator.bl_idname, icon='ERROR')
@@ -648,7 +767,6 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
                 break
         if b.bone.use_connect:
             layout.operator(JIGGLE_OT_connected_tooltip_operator.bl_idname, icon='ERROR')
-        drawprops(col,b,['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction'])
             
 
 class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
@@ -828,6 +946,36 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_prop(s, c, 'jiggle_friction')
     )
+    bpy.types.PoseBone.jiggle_collider_type = bpy.props.EnumProperty(
+        name='Collider Type',
+        items=[('Object','Object','Collide with a selected mesh'),('Collection','Collection','Collide with all meshes in selected collection')],
+        override={'LIBRARY_OVERRIDABLE'},
+        update=lambda s, c: update_prop(s, c, 'jiggle_collider_type')
+    )
+    bpy.types.PoseBone.jiggle_collider = bpy.props.PointerProperty(
+        name='Collider Object', 
+        description='Mesh object to collide with', 
+        type=bpy.types.Object, 
+        poll = collider_poll, 
+        override={'LIBRARY_OVERRIDABLE'}, 
+        update=lambda s, c: update_prop(s, c, 'jiggle_collider')
+    )
+    bpy.types.PoseBone.jiggle_collider_collection = bpy.props.PointerProperty(
+        name = 'Collider Collection', 
+        description='Collection to collide with', 
+        type=bpy.types.Collection, 
+        override={'LIBRARY_OVERRIDABLE'}, 
+        update=lambda s, c: update_prop(s, c, 'jiggle_collider_collection')
+    )
+    bpy.types.PoseBone.jiggle_collision_radius = bpy.props.FloatProperty(
+        name = 'Collision Radius',
+        description = 'Collision radius for use in collision detection and depenetration.',
+        min = 0,
+        default = 0.1,
+        override={'LIBRARY_OVERRIDABLE'},
+        update=lambda s, c: update_prop(s, c, 'jiggle_collision_radius')
+    )
+    
     
     #internal variables
     bpy.utils.register_class(JiggleBone)
@@ -848,6 +996,7 @@ def register():
     bpy.utils.register_class(JIGGLE_OT_no_keyframe_tooltip_operator)
     bpy.utils.register_class(JIGGLE_OT_connected_tooltip_operator)
     bpy.utils.register_class(JIGGLE_OT_constraints_tooltip_operator)
+    bpy.utils.register_class(JIGGLE_OT_mesh_collision_tooltip_operator)
     
     bpy.app.handlers.frame_change_pre.append(jiggle_pre)
     bpy.app.handlers.frame_change_post.append(jiggle_post)
@@ -874,6 +1023,7 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_OT_no_keyframe_tooltip_operator)
     bpy.utils.unregister_class(JIGGLE_OT_connected_tooltip_operator)
     bpy.utils.unregister_class(JIGGLE_OT_constraints_tooltip_operator)
+    bpy.utils.unregister_class(JIGGLE_OT_mesh_collision_tooltip_operator)
     
     bpy.app.handlers.frame_change_pre.remove(jiggle_pre)
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
