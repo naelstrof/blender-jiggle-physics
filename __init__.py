@@ -273,7 +273,10 @@ def update_prop(self,context,prop):
     if type(self) == bpy.types.PoseBone: 
         auto_key = bpy.context.scene.tool_settings.use_keyframe_insert_auto
         for b in context.selected_pose_bones:
-            b[prop] = self[prop]
+            if b is self: continue
+            if getattr(b,prop) == getattr(self,prop):
+                continue
+            setattr(b, prop, getattr(self,prop))
             if auto_key:
                 if prop not in ['jiggle_enable', 'jiggle_mute', 'jiggle_freeze']:
                     b.keyframe_insert(data_path=prop, index=-1)
@@ -297,12 +300,6 @@ def get_child(b):
         if (child.jiggle_enable):
             return child
     return None
-
-def draw_apply_pose(bone,child,coords):
-    if not child:
-        return
-    coords.append(bone.jiggle.debug)
-    coords.append(child.jiggle.debug)
 
 def billboard_circle(verts, center, radius, segments=32):
     rv3d = bpy.context.region_data
