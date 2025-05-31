@@ -301,7 +301,7 @@ def get_child(b):
             return child
     return None
 
-def billboard_circle(verts, center, radius, segments=32):
+def billboard_circle(verts, center, radius, segments=16):
     rv3d = bpy.context.region_data
     view_matrix = rv3d.view_matrix
     inv_view = view_matrix.inverted()
