@@ -458,10 +458,11 @@ def jiggle_load(scene):
     s = bpy.context.scene
     s.jiggle.is_rendering = False
             
-class JiggleCopy(bpy.types.Operator):
+class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
     """Copy active jiggle settings to selected bones"""
-    bl_idname = "jiggle.copy"
+    bl_idname = "armature.jiggle_copy"
     bl_label = "Copy Settings to Selected"
+    bl_options = {'UNDO'}
     
     @classmethod
     def poll(cls,context):
@@ -471,7 +472,10 @@ class JiggleCopy(bpy.types.Operator):
         bone = context.active_pose_bone
         for other_bone in context.selected_pose_bones:
             if other_bone == bone: continue
-            other_bone.jiggle = bone.jiggle.copy()
+            other_bone.jiggle.enable = bone.jiggle.enable
+            other_bone.jiggle.collider_type = bone.jiggle.collider_type
+            other_bone.jiggle.collider = bone.jiggle.collider
+            other_bone.jiggle.collider_collection = bone.jiggle.collider_collection
             other_bone.jiggle_angle_elasticity = bone.jiggle_angle_elasticity
             other_bone.jiggle_length_elasticity = bone.jiggle_length_elasticity
             other_bone.jiggle_elasticity_soften = bone.jiggle_elasticity_soften
@@ -490,9 +494,9 @@ def jiggle_reset(context):
     context.scene.jiggle.lastframe = context.scene.frame_current
 
 
-class JiggleReset(bpy.types.Operator):
-    """Reset scene jiggle physics to rest state"""
-    bl_idname = "jiggle.reset"
+class SCENE_OT_JiggleReset(bpy.types.Operator):
+    """Reset jiggle physics of scene, bone, or object depending on context"""
+    bl_idname = "scene.jiggle_reset"
     bl_label = "Reset Physics"
     
     @classmethod
@@ -503,11 +507,12 @@ class JiggleReset(bpy.types.Operator):
         jiggle_reset(context)
         return {'FINISHED'}
 
-class JiggleClearKeyframes(bpy.types.Operator):
+class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
     """Reset keyframes on jiggle parameters"""
-    bl_idname = "jiggle.clear_keyframes"
+    bl_idname = "anim.jiggle_clear_keyframes"
     bl_label = "Clear Parameter Keyframes"
     bl_description = "Remove keyframes from jiggle parameters on selected bones. This will not remove the jiggle settings themselves, just the keyframes that control them."
+    bl_options = {'UNDO'}
     
     @classmethod
     def poll(cls,context):
@@ -523,8 +528,8 @@ class JiggleClearKeyframes(bpy.types.Operator):
                     action.fcurves.remove(fc)
         return {'FINISHED'}
 
-class JiggleProfile(bpy.types.Operator):
-    bl_idname = "jiggle.profile"
+class SCENE_OT_JiggleProfile(bpy.types.Operator):
+    bl_idname = "scene.jiggle_profile"
     bl_label = "Print Profiling Information to Console"
     
     @classmethod
@@ -543,10 +548,11 @@ def jiggle_select(context):
         for bone in jiggle_bones:
             bone.bone.select = True
     
-class JiggleSelect(bpy.types.Operator):
+class ARMATURE_OT_JiggleSelect(bpy.types.Operator):
     """Select jiggle bones on selected objects in pose mode"""
-    bl_idname = "jiggle.select"
+    bl_idname = "armature.jiggle_select"
     bl_label = "Select Enabled"
+    bl_options = {'UNDO'}
     
     @classmethod
     def poll(cls,context):
@@ -556,10 +562,11 @@ class JiggleSelect(bpy.types.Operator):
         jiggle_select(context)
         return {'FINISHED'}
     
-class JiggleBake(bpy.types.Operator):
+class ARMATURE_OT_JiggleBake(bpy.types.Operator):
     """Bake this object's visible jiggle bones to keyframes"""
-    bl_idname = "jiggle.bake"
+    bl_idname = "armature.jiggle_bake"
     bl_label = "Bake Jiggle"
+    bl_options = {'UNDO'}
     
     @classmethod
     def poll(cls,context):
@@ -655,7 +662,7 @@ class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
 
 
 class JIGGLE_OT_no_keyframe_tooltip_operator(bpy.types.Operator):
-    bl_idname = "jiggle.no_keyframes_tooltip"
+    bl_idname = "anim.jiggle_no_keyframes_tooltip"
     bl_label = "No Rest Pose Detected"
     bl_description = "Keyframes are used to define the jiggle's rest pose. Please add keyframes to the bones in their rest state. You may safely ignore this warning if you are using actions in the NLA"
 
@@ -663,9 +670,10 @@ class JIGGLE_OT_no_keyframe_tooltip_operator(bpy.types.Operator):
         return {'FINISHED'}
 
 class JIGGLE_OT_connected_tooltip_operator(bpy.types.Operator):
-    bl_idname = "jiggle.connected_tooltip"
+    bl_idname = "armature.jiggle_connected_tooltip"
     bl_label = "Connected Bone Detected"
     bl_description = "Connected bones ignore length elasticity, preventing them from stretching. Click this button to automatically fix"
+    bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls,context):
@@ -688,7 +696,7 @@ class JIGGLE_OT_connected_tooltip_operator(bpy.types.Operator):
         return {'FINISHED'}
 
 class JIGGLE_OT_mesh_collision_tooltip_operator(bpy.types.Operator):
-    bl_idname = "jiggle.mesh_collision_tooltip"
+    bl_idname = "armature.jiggle_mesh_collision_tooltip"
     bl_label = "Mesh Collision Detected"
     bl_description = "Meshes are not convex, making them bad for collisions. Please use Empty spheres instead (Add -> Empty -> Sphere)"
 
@@ -700,7 +708,7 @@ class JIGGLE_OT_mesh_collision_tooltip_operator(bpy.types.Operator):
         return {'FINISHED'}
 
 class JIGGLE_OT_constraints_tooltip_operator(bpy.types.Operator):
-    bl_idname = "jiggle.constraints_tooltip"
+    bl_idname = "armature.jiggle_constraints_tooltip"
     bl_label = "Constraints Detected"
     bl_description = "Constraints are applied after jiggle, which can cause strange behavior. Click this button to automatically disable constraints on selected bones"
 
@@ -777,7 +785,7 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
                         col.separator()
                         col.operator(JIGGLE_OT_mesh_collision_tooltip_operator.bl_idname, icon='ERROR')
                         break
-        layout.operator(JiggleClearKeyframes.bl_idname)
+        layout.operator(ANIM_OT_JiggleClearKeyframes.bl_idname)
         if not is_bone_animated(b.id_data, b.name):
             layout.operator(JIGGLE_OT_no_keyframe_tooltip_operator.bl_idname, icon='ERROR')
         for c in b.constraints:
@@ -803,10 +811,10 @@ class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
         layout.use_property_decorate=False
         col = layout.column(align=True)
         if context.object.jiggle.enable and context.mode == 'POSE':
-            col.operator('jiggle.copy')
-            col.operator('jiggle.select')
-        col.operator('jiggle.reset')
-        if context.scene.jiggle.debug: col.operator('jiggle.profile')
+            col.operator(ARMATURE_OT_JiggleCopy.bl_idname)
+            col.operator(ARMATURE_OT_JiggleSelect.bl_idname)
+        col.operator(SCENE_OT_JiggleReset.bl_idname)
+        if context.scene.jiggle.debug: col.operator('scene.jiggle_profile')
         layout.prop(context.scene.jiggle, 'loop')
         
 class JIGGLE_PT_Bake(JigglePanel,bpy.types.Panel):
@@ -827,7 +835,7 @@ class JIGGLE_PT_Bake(JigglePanel,bpy.types.Panel):
         row = layout.row()
         row.enabled = not context.scene.jiggle.bake_overwrite
         row.prop(context.scene.jiggle, 'bake_nla')
-        layout.operator('jiggle.bake')
+        layout.operator('armature.jiggle_bake')
 
 class JiggleBone(bpy.types.PropertyGroup):
     working_position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
@@ -1002,12 +1010,12 @@ def register():
     bpy.utils.register_class(JiggleScene)
     bpy.types.Scene.jiggle = bpy.props.PointerProperty(type=JiggleScene, override={'LIBRARY_OVERRIDABLE'})
     
-    bpy.utils.register_class(JiggleReset)
-    bpy.utils.register_class(JiggleClearKeyframes)
-    bpy.utils.register_class(JiggleProfile)
-    bpy.utils.register_class(JiggleCopy)
-    bpy.utils.register_class(JiggleSelect)
-    bpy.utils.register_class(JiggleBake)
+    bpy.utils.register_class(SCENE_OT_JiggleReset)
+    bpy.utils.register_class(ANIM_OT_JiggleClearKeyframes)
+    bpy.utils.register_class(SCENE_OT_JiggleProfile)
+    bpy.utils.register_class(ARMATURE_OT_JiggleCopy)
+    bpy.utils.register_class(ARMATURE_OT_JiggleSelect)
+    bpy.utils.register_class(ARMATURE_OT_JiggleBake)
     bpy.utils.register_class(JIGGLE_PT_Settings)
     bpy.utils.register_class(JIGGLE_PT_Bone)
     bpy.utils.register_class(JIGGLE_PT_Utilities)
@@ -1030,12 +1038,12 @@ def unregister():
     bpy.utils.unregister_class(JiggleBone)
     bpy.utils.unregister_class(JiggleObject)
     bpy.utils.unregister_class(JiggleScene)
-    bpy.utils.unregister_class(JiggleReset)
-    bpy.utils.unregister_class(JiggleClearKeyframes)
-    bpy.utils.unregister_class(JiggleProfile)
-    bpy.utils.unregister_class(JiggleCopy)
-    bpy.utils.unregister_class(JiggleSelect)
-    bpy.utils.unregister_class(JiggleBake)
+    bpy.utils.unregister_class(SCENE_OT_JiggleReset)
+    bpy.utils.unregister_class(ANIM_OT_JiggleClearKeyframes)
+    bpy.utils.unregister_class(SCENE_OT_JiggleProfile)
+    bpy.utils.unregister_class(ARMATURE_OT_JiggleCopy)
+    bpy.utils.unregister_class(ARMATURE_OT_JiggleSelect)
+    bpy.utils.unregister_class(ARMATURE_OT_JiggleBake)
     bpy.utils.unregister_class(JIGGLE_PT_Settings)
     bpy.utils.unregister_class(JIGGLE_PT_Bone)
     bpy.utils.unregister_class(JIGGLE_PT_Utilities)
