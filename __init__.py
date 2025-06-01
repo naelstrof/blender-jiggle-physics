@@ -4,7 +4,6 @@ from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
 
 ZERO_VEC = Vector((0,0,0))
-ONE_VEC = Vector((1,1,1))
 IDENTITY_MAT = Matrix.Identity(4)
 IDENTITY_QUAT = Quaternion()
 
@@ -268,24 +267,29 @@ def reset_bone(b):
     b.jiggle.working_position0 = b.jiggle.position0 = b.jiggle.position_last0 = (b.id_data.matrix_world@b.head)
     b.jiggle.working_position1 = b.jiggle.position1 = b.jiggle.position_last1 = (b.id_data.matrix_world@b.head)
     b.jiggle.working_position2 = b.jiggle.position2 = b.jiggle.position_last2 = (b.id_data.matrix_world@b.head)
-        
-def update_prop(self,context,prop): 
-    if type(self) == bpy.types.PoseBone: 
-        auto_key = bpy.context.scene.tool_settings.use_keyframe_insert_auto
-        for b in context.selected_pose_bones:
-            if b is self: continue
-            if getattr(b,prop) == getattr(self,prop):
-                continue
-            setattr(b, prop, getattr(self,prop))
-            if auto_key:
-                if prop not in ['jiggle_enable', 'jiggle_mute', 'jiggle_freeze']:
-                    b.keyframe_insert(data_path=prop, index=-1)
-        if prop in ['jiggle_enable']:
-            self.id_data.jiggle_enable = self[prop]
-            for b in context.selected_pose_bones:
-                reset_bone(b)
-    context.scene.jiggle.is_rendering = False
-        
+
+# TODO: This is kinda nasty, bones recursively propagate-- to prevent infinite recursion we use a simple global flag.
+jiggle_propagating = False
+def update_pose_bone_jiggle_prop(self,context,prop): 
+    global jiggle_propagating
+    if jiggle_propagating:
+        return
+    jiggle_propagating = True
+    auto_key = bpy.context.scene.tool_settings.use_keyframe_insert_auto
+    for b in context.selected_pose_bones:
+        if b == self:
+            continue
+        if getattr(b,prop) == getattr(self,prop):
+            continue
+        setattr(b, prop, getattr(self,prop))
+        if auto_key and prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
+            b.keyframe_insert(data_path=prop, index=-1)
+        if prop == 'jiggle_enable':
+            reset_bone(b)
+    if prop == 'jiggle_enable':
+        self.id_data.jiggle_enable = True
+    jiggle_propagating = False
+
 def get_parent(b):
     return b.parent
 
@@ -388,7 +392,7 @@ def jiggle_post(scene,depsgraph):
     frame_loop = jiggle.loop
 
     if (frame_current == frame_start) and not frame_loop and not frame_is_preroll:
-        bpy.ops.jiggle.reset()
+        jiggle_reset()
         if scene.jiggle_debug: _profiler.disable()
         return
 
@@ -463,6 +467,15 @@ class JiggleCopy(bpy.types.Operator):
             other_bone.jiggle_friction = bone.jiggle_friction
         return {'FINISHED'}
 
+def jiggle_reset(context):
+    jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle_enable and not obj.jiggle_mute]
+    for ob in jiggle_objs:
+        jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'jiggle_enable', False)]
+        for bone in jiggle_bones:
+            reset_bone(bone)
+    context.scene.jiggle.lastframe = context.scene.frame_current
+
+
 class JiggleReset(bpy.types.Operator):
     """Reset scene jiggle physics to rest state"""
     bl_idname = "jiggle.reset"
@@ -473,12 +486,7 @@ class JiggleReset(bpy.types.Operator):
         return context.scene.jiggle_enable and context.mode in ['OBJECT', 'POSE']
     
     def execute(self,context):
-        jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle_enable and not obj.jiggle_mute]
-        for ob in jiggle_objs:
-            jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'jiggle_enable', False)]
-            for bone in jiggle_bones:
-                reset_bone(bone)
-        context.scene.jiggle.lastframe = context.scene.frame_current
+        jiggle_reset(context)
         return {'FINISHED'}
 
 class JiggleClearKeyframes(bpy.types.Operator):
@@ -513,6 +521,13 @@ class JiggleProfile(bpy.types.Operator):
         pstats.Stats(_profiler).sort_stats('cumulative').print_stats(20)
         _profiler.clear()
         return {'FINISHED'}
+
+def jiggle_select(context):
+    jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle_enable and not obj.jiggle_mute]
+    for ob in jiggle_objs:
+        jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'jiggle_enable', False)]
+        for bone in jiggle_bones:
+            bone.bone.select = True
     
 class JiggleSelect(bpy.types.Operator):
     """Select jiggle bones on selected objects in pose mode"""
@@ -524,12 +539,7 @@ class JiggleSelect(bpy.types.Operator):
         return context.mode in ['POSE']
     
     def execute(self,context):
-        bpy.ops.pose.select_all(action='DESELECT')
-        jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle_enable and not obj.jiggle_mute]
-        for ob in jiggle_objs:
-            jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone, 'jiggle_enable', False)]
-            for bone in jiggle_bones:
-                bone.bone.select = True
+        jiggle_select(context)
         return {'FINISHED'}
     
 class JiggleBake(bpy.types.Operator):
@@ -539,7 +549,7 @@ class JiggleBake(bpy.types.Operator):
     
     @classmethod
     def poll(cls,context):
-        return context.object
+        return context.object and context.mode == 'POSE'
     
     def execute(self,context):
         def push_nla():
@@ -554,14 +564,13 @@ class JiggleBake(bpy.types.Operator):
             
         push_nla()
         
-        bpy.ops.jiggle.reset()
-            
         #preroll
         duration = context.scene.frame_end - context.scene.frame_start
         preroll = context.scene.jiggle.preroll
         context.scene.jiggle.is_preroll = False
-        bpy.ops.jiggle.select()
-        bpy.ops.jiggle.reset()
+        bpy.ops.pose.select_all(action='DESELECT')
+        jiggle_select(context)
+        jiggle_reset(context)
         while preroll >= 0:
             if context.scene.jiggle.loop:
                 frame = context.scene.frame_end - (preroll%duration)
@@ -617,7 +626,6 @@ class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
         if not context.object.type == 'ARMATURE':
             row.label(text = ' Select armature.')
             return
-#        row.label(icon='TRIA_RIGHT')
         if context.object.jiggle_freeze:
             row.prop(context.object,'jiggle_freeze',icon='FREEZE',icon_only=True,emboss=False)
             row.label(text = 'Jiggle Frozen after Bake.')
@@ -845,14 +853,12 @@ def register():
         description = 'Enable jiggle on this scene',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_enable')
     )
     bpy.types.Scene.jiggle_debug = bpy.props.BoolProperty(
         name = 'Enable Debug',
         description = 'Enable drawing of jiggle debug lines. Green is the detected rest pose, red is the simulated physics pose. This is slow so disable when not needed',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_debug')
     )
     bpy.types.Object.jiggle_enable = bpy.props.BoolProperty(
         name = 'Enable Armature',
@@ -866,7 +872,6 @@ def register():
         description = 'Mute jiggle on this armature',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_mute')
     )
     bpy.types.Object.jiggle_freeze = bpy.props.BoolProperty(
         name = 'Freeze Jiggle',
@@ -880,7 +885,7 @@ def register():
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
         options={'HIDDEN'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_enable')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_enable')
     )
     bpy.types.PoseBone.jiggle_angle_elasticity = bpy.props.FloatProperty(
         name = 'Angle Elasticity',
@@ -889,7 +894,7 @@ def register():
         default = 0.6,
         max = 1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_angle_elasticity')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_angle_elasticity')
     )
     bpy.types.PoseBone.jiggle_length_elasticity = bpy.props.FloatProperty(
         name = 'Length Elasticity',
@@ -898,7 +903,7 @@ def register():
         default = 0.8,
         max=1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_length_elasticity')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_length_elasticity')
     )
     bpy.types.PoseBone.jiggle_elasticity_soften = bpy.props.FloatProperty(
         name = 'Elasticity Soften',
@@ -907,14 +912,14 @@ def register():
         default = 0,
         max=1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_elasticity_soften')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_elasticity_soften')
     )
     bpy.types.PoseBone.jiggle_gravity = bpy.props.FloatProperty(
         name = 'Gravity',
         description = 'Multiplier for scene gravity',
         default = 1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_gravity')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_gravity')
     )
     bpy.types.PoseBone.jiggle_blend = bpy.props.FloatProperty(
         name = 'Blend',
@@ -923,7 +928,7 @@ def register():
         default = 1,
         max = 1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_blend')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_blend')
     )
     bpy.types.PoseBone.jiggle_air_drag = bpy.props.FloatProperty(
         name = 'Air Drag',
@@ -932,7 +937,7 @@ def register():
         default = 0,
         max = 1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_air_drag')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_air_drag')
     )
     bpy.types.PoseBone.jiggle_friction = bpy.props.FloatProperty(
         name = 'Friction',
@@ -941,13 +946,13 @@ def register():
         default = 0.1,
         max = 1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_friction')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_friction')
     )
     bpy.types.PoseBone.jiggle_collider_type = bpy.props.EnumProperty(
         name='Collider Type',
         items=[('Object','Object','Collide with a selected mesh'),('Collection','Collection','Collide with all meshes in selected collection')],
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_collider_type')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collider_type')
     )
     bpy.types.PoseBone.jiggle_collider = bpy.props.PointerProperty(
         name='Collider Object', 
@@ -955,14 +960,14 @@ def register():
         type=bpy.types.Object, 
         poll = collider_poll, 
         override={'LIBRARY_OVERRIDABLE'}, 
-        update=lambda s, c: update_prop(s, c, 'jiggle_collider')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collider')
     )
     bpy.types.PoseBone.jiggle_collider_collection = bpy.props.PointerProperty(
         name = 'Collider Collection', 
         description='Collection to collide with', 
         type=bpy.types.Collection, 
         override={'LIBRARY_OVERRIDABLE'}, 
-        update=lambda s, c: update_prop(s, c, 'jiggle_collider_collection')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collider_collection')
     )
     bpy.types.PoseBone.jiggle_collision_radius = bpy.props.FloatProperty(
         name = 'Collision Radius',
@@ -970,7 +975,7 @@ def register():
         min = 0,
         default = 0.1,
         override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_prop(s, c, 'jiggle_collision_radius')
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collision_radius')
     )
     
     
