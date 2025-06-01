@@ -40,23 +40,47 @@ As a bonus, cProfile is enabled with Debug Mode so you can analyze the cost of J
 
 ## Usage
 
-Find Jiggle Physics under the Animation tab by pressing the N key in the 3D viewport.
+- Find Jiggle Physics under the Animation tab by pressing the N key in the 3D viewport.
 
 ![Animation tab](https://github.com/user-attachments/assets/839fcf23-f756-411f-aa3c-77a669a74d05)
 
-Enable the scene's jiggle by clicking the closed eyeball.
+- Enable the scene's jiggle by clicking the closed eyeball.
 
-Then, selecting bones in pose mode will allow you to enable Jiggle, and adjust their parameters. Be weary that the settings won't appear unless one of the bones are "active" (Box selection does not set an active pose bone).
-
-Adjusting any parameter will batch-change all the selected bones, if keyframe recording is enabled this will also keyframe every bone's parameter.
+- Enable a pose bone's jiggle by selecting a bone in pose mode and checking the "Jiggle Bone" checkbox.
 
 ![parameter list](https://github.com/user-attachments/assets/ff955f3e-c747-48b0-8ff2-87e5a96bb280)
 
-Add a keyframe for the jiggled bones to set their "rest" pose, you can keyframe animation too to make tails wag, and ears perk.
+- Add a position and rotation keyframe with the I key on the bones to set the "rest" pose of the jiggle. 
 
-Finally, ensure to read warnings on the panel and try to fix them. For example if you forgot to keyframe a rest pose, it will display a warning button with a tooltip describing the issue and how to fix it:
+## Troubleshooting
+
+Keep an eye out for warning buttons in the panel, they will detect most issues and describe how to solve them automatically!
 
 ![warning popup](https://github.com/user-attachments/assets/2fba2440-f106-4476-8301-f41440b4836a)
+
+### My bones are drooping away, and something is clearly wrong.
+
+![droopy solve](https://github.com/user-attachments/assets/38d499f0-4ff3-452f-a088-ee3e2453d4e0)
+
+Without a position and rotation keyframe, Jiggle Physics doesn't know where to place them! Double check your dope sheet to ensure that the jiggle bones have keyframes. If they don't, reset their position and rotation with *alt+g* and *alt+r*, then add a keyframe with *i*.
+
+### My settings don't seem to stick after changing them!
+
+![keyframed parameters](https://github.com/user-attachments/assets/fcf91027-708a-4557-b556-9520892b5594)
+
+The jiggle parameters can be keyframed into animations and actions. There's a handy button to delete all jiggle parameter keys for all selected bones called "Clear Parameter Keyframes" which will attempt to delete them for you. If your keyframes are in an action, make sure that you're tweaking the action first!
+
+### I'm not getting any stretchy physics on my bones!
+
+"Connected" bones cannot be translated. This prevents jiggle physics from stretching them. If your armature is linked in as an asset then you might need to edit the source file.
+
+### How do I set a bone to have a 90 degree rotation limit?
+
+That's the neat part, you don't! Instead you can set the Blend value to `0.5`, which will force the final pose to never be more than 90 degrees from the rest pose! Though with more effort it should be possible to find an Angle Elasticity and Length Elasticity that will exhibit the desired jiggle.
+
+### How do I collide with a flat surface?
+
+Unfortunately meshes only work okay with bones that have a large radius. Flat planes are infinitely thin. Instead you should try to build your colliders out of scaled empties (preferrably *Empty->Sphere*s). One way to get a flat floor is to make a planetary-sized collider below the feet.
 
 ## Special Thanks
 
