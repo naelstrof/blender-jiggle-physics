@@ -50,7 +50,7 @@ As a bonus, cProfile is enabled with Debug Mode so you can analyze the cost of J
 
 ![parameter list](https://github.com/user-attachments/assets/ff955f3e-c747-48b0-8ff2-87e5a96bb280)
 
-- Add a position and rotation keyframe with the I key on the bones to set the "rest" pose of the jiggle. 
+- Add a position and rotation keyframe with the `i` key on the bones to set the "rest" pose of the jiggle. 
 
 ## Troubleshooting
 
@@ -62,7 +62,7 @@ Keep an eye out for warning buttons in the panel, they will detect most issues a
 
 ![droopy solve](https://github.com/user-attachments/assets/38d499f0-4ff3-452f-a088-ee3e2453d4e0)
 
-Without a position and rotation keyframe, Jiggle Physics doesn't know where to place them! Double check your dope sheet to ensure that the jiggle bones have keyframes. If they don't, reset their position and rotation with *alt+g* and *alt+r*, then add a keyframe with *i*.
+Without a position and rotation keyframe, Jiggle Physics doesn't know what the "rest" pose should be! Double check your dope sheet to ensure that the jiggle bones have position and rotation keyframes. If they don't, reset their position and rotation with *alt+g* and *alt+r*, then add a keyframe with *i*.
 
 ### My settings don't seem to stick after changing them!
 
