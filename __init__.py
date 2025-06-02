@@ -27,18 +27,18 @@ class VirtualParticle:
                 self.position = bone.jiggle.position0.copy()
                 self.position_last = bone.jiggle.position_last0.copy()
                 self.working_position = bone.jiggle.working_position0.copy()
-                self.debug = bone.jiggle.debug0.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position0.copy()
             case 'normal':
                 self.position = bone.jiggle.position1.copy()
                 self.position_last = bone.jiggle.position_last1.copy()
                 self.working_position = bone.jiggle.working_position1.copy()
-                self.debug = bone.jiggle.debug1.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position1.copy()
                 self.pose = (self.obj_world_matrix@bone.head)
             case 'forwardProject':
                 self.position = bone.jiggle.position2.copy()
                 self.position_last = bone.jiggle.position_last2.copy()
                 self.working_position = bone.jiggle.working_position2.copy()
-                self.debug = bone.jiggle.debug2.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position2.copy()
                 self.pose = (self.obj_world_matrix@bone.tail)
 
     def set_parent(self, parent):
@@ -61,17 +61,17 @@ class VirtualParticle:
                 self.bone.jiggle.position0 = self.position
                 self.bone.jiggle.position_last0 = self.position_last
                 self.bone.jiggle.working_position0 = self.working_position
-                self.bone.jiggle.debug0 = self.debug
+                self.bone.jiggle.rest_pose_position0 = self.rest_pose_position
             case 'normal':
                 self.bone.jiggle.position1 = self.position
                 self.bone.jiggle.position_last1 = self.position_last
                 self.bone.jiggle.working_position1 = self.working_position
-                self.bone.jiggle.debug1 = self.debug
+                self.bone.jiggle.rest_pose_position1 = self.rest_pose_position
             case 'forwardProject':
                 self.bone.jiggle.position2 = self.position
                 self.bone.jiggle.position_last2 = self.position_last
                 self.bone.jiggle.working_position2 = self.working_position
-                self.bone.jiggle.debug2 = self.debug
+                self.bone.jiggle.rest_pose_position2 = self.rest_pose_position
 
     def verlet_integrate(self, dt2, gravity):
         if not self.parent:
@@ -172,7 +172,7 @@ class VirtualParticle:
     def apply_pose(self):
         if not self.child:
             if bpy.context.scene.jiggle.rest_pose_overlay:
-                self.debug = self.pose
+                self.rest_pose_position = self.pose
             return
 
         inverted_obj_matrix = self.obj_world_matrix.inverted()
@@ -182,9 +182,9 @@ class VirtualParticle:
         local_child_working_position = (inverted_obj_matrix@self.child.working_position)
         local_working_position = (inverted_obj_matrix@self.working_position)
 
-        if bpy.context.scene.jiggle.debug:
-            self.debug = self.pose
-            self.child.debug = self.child.pose
+        if bpy.context.scene.jiggle.rest_pose_overlay:
+            self.rest_pose_position = self.pose
+            self.child.rest_pose_position = self.child.pose
 
         self.bone_length_change = (local_child_working_position - local_working_position).length - (local_child_pose - local_pose).length
 
@@ -349,8 +349,8 @@ def draw_callback():
     rest_pose_overlay_verts = []
     for particle in virtual_particles:
         if particle.parent:
-            rest_pose_overlay_verts.append(particle.parent.debug)
-            rest_pose_overlay_verts.append(particle.debug)
+            rest_pose_overlay_verts.append(particle.parent.rest_pose_position)
+            rest_pose_overlay_verts.append(particle.rest_pose_position)
             verts.append(particle.parent.working_position)
             verts.append(particle.working_position)
     for particle in virtual_particles:
@@ -962,17 +962,17 @@ class JiggleBone(bpy.types.PropertyGroup):
     working_position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    debug0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
     working_position1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    debug1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
     working_position2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    debug2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
     enable: bpy.props.BoolProperty(
         name = 'Enable Bone Jiggle',
