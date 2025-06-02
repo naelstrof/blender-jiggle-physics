@@ -112,11 +112,11 @@ class VirtualParticle:
         self.working_position = collider_matrix @ local_working_position
 
     def solve_collisions(self, depsgraph):
-        if not self.bone.jiggle_collider_type:
+        if not self.bone.jiggle.collider_type:
             return
 
-        if self.bone.jiggle_collider_type == 'Object':
-            collider = self.bone.jiggle_collider
+        if self.bone.jiggle.collider_type == 'Object':
+            collider = self.bone.jiggle.collider
             if not collider:
                 return
             if collider.type == 'MESH':
@@ -124,7 +124,7 @@ class VirtualParticle:
             if collider.type == 'EMPTY':
                 self.empty_collide(collider)
         else:
-            collider_collection = self.bone.jiggle_collider_collection
+            collider_collection = self.bone.jiggle.collider_collection
             if not collider_collection:
                 return
             for collider in collider_collection.objects:
@@ -344,7 +344,7 @@ def draw_callback():
             verts.append(particle.parent.working_position)
             verts.append(particle.working_position)
     for particle in virtual_particles:
-        if particle.parent and particle.bone.jiggle_collider:
+        if particle.parent and particle.bone.jiggle.collider:
             billboard_circle(verts, particle.working_position, particle.bone.jiggle_collision_radius)
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     batch = batch_for_shader(shader, 'LINES', {"pos": verts})
@@ -661,17 +661,9 @@ class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
             return
 
 
-class JIGGLE_OT_no_keyframe_tooltip_operator(bpy.types.Operator):
-    bl_idname = "anim.jiggle_no_keyframes_tooltip"
-    bl_label = "No Rest Pose Detected"
-    bl_description = "Keyframes are used to define the jiggle's rest pose. Please add keyframes to the bones in their rest state. You may safely ignore this warning if you are using actions in the NLA"
-
-    def execute(self, context):
-        return {'FINISHED'}
-
-class JIGGLE_OT_connected_tooltip_operator(bpy.types.Operator):
-    bl_idname = "armature.jiggle_connected_tooltip"
-    bl_label = "Connected Bone Detected"
+class JIGGLE_OT_bone_connected_disable(bpy.types.Operator):
+    bl_idname = "armature.jiggle_bone_connected_disable"
+    bl_label = "Disconnect Selected Bones"
     bl_description = "Connected bones ignore length elasticity, preventing them from stretching. Click this button to automatically fix"
     bl_options = {'UNDO'}
 
@@ -707,10 +699,11 @@ class JIGGLE_OT_mesh_collision_tooltip_operator(bpy.types.Operator):
     def execute(self, context):
         return {'FINISHED'}
 
-class JIGGLE_OT_constraints_tooltip_operator(bpy.types.Operator):
-    bl_idname = "armature.jiggle_constraints_tooltip"
-    bl_label = "Constraints Detected"
+class JIGGLE_OT_bone_constraints_disable(bpy.types.Operator):
+    bl_idname = "armature.jiggle_bone_constraints_disable"
+    bl_label = "Disable Constraints"
     bl_description = "Constraints are applied after jiggle, which can cause strange behavior. Click this button to automatically disable constraints on selected bones"
+    bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls,context):
@@ -724,6 +717,92 @@ class JIGGLE_OT_constraints_tooltip_operator(bpy.types.Operator):
             for constraint in pose_bone.constraints:
                 constraint.enabled = False
         return {'FINISHED'}
+
+class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+    
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.object and not context.object.jiggle.mute and context.active_pose_bone and context.active_pose_bone.jiggle.enable and not is_bone_animated(context.active_pose_bone.id_data, context.active_pose_bone.name)
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='No Keyframes Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Position and rotation keyframes are used for the rest pose.')
+        box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
+
+class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,bpy.types.Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+    
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.object and not context.object.jiggle.mute and context.active_pose_bone and context.active_pose_bone.jiggle.enable and any(c.enabled for c in context.active_pose_bone.constraints)
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='Bone Constraints Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Bone constraints are applied after jiggle, which can cause strange behavior.')
+        box.label(text=f'Click the button below to automatically disable constraints on selected bones.')
+        box.label(text=f'You can safely ignore this if you are intending to constrain the jiggle pose.')
+        self.layout.operator(JIGGLE_OT_bone_constraints_disable.bl_idname, text='Disable Constraints on Selected Bones')
+
+class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+    
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.object and not context.object.jiggle.mute and context.active_pose_bone and context.active_pose_bone.jiggle.enable and not is_bone_animated(context.active_pose_bone.id_data, context.active_pose_bone.name)
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='No Keyframes Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Position and rotation keyframes are used for the rest pose.')
+        box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
+
+class JIGGLE_PT_MeshCollisionWarning(JigglePanel,bpy.types.Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+    
+    @classmethod
+    def poll(cls,context):
+        if not context.scene.jiggle.enable or not context.object or context.object.jiggle.mute or not context.active_pose_bone or not context.active_pose_bone.jiggle.enable:
+            return False
+        if context.active_pose_bone.jiggle.collider_type == 'Object':
+            collider = context.active_pose_bone.jiggle.collider
+            if collider and collider.type == 'MESH':
+                return True
+        elif context.active_pose_bone.jiggle.collider_type == 'Collection':
+            collider_collection = context.active_pose_bone.jiggle.collider_collection
+            if collider_collection:
+                for collider in collider_collection.objects:
+                    if collider.type == 'MESH':
+                        return True
+        return False
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='Mesh Collision Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Meshes are not convex, making them inoptimal for collisions.')
+        box.label(text=f'Please use scaled Empty spheres instead (Add -> Empty -> Sphere)')
 
 class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
     bl_label = ''
@@ -759,7 +838,7 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
             row = col.row(align=True)
             row.prop_search(b.jiggle, 'collider', context.scene, 'objects',text=' ')
             if b.jiggle.collider:
-                if b.jiggle.collider.name in context.scene.objects:
+                if b.jiggle.collider:
                     collision = True
                 else:
                     row.label(text='',icon='UNLINKED')
@@ -775,26 +854,7 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
         if collision:
             col = layout.column(align=True)
             drawprops(col,b,['jiggle_collision_radius'])
-            if b.jiggle.collider_type == 'Object':
-                if b.jiggle.collider.type == 'MESH':
-                    col.separator()
-                    col.operator(JIGGLE_OT_mesh_collision_tooltip_operator.bl_idname, icon='ERROR')
-            else:
-                for collider in b.jiggle.collider_collection.objects:
-                    if collider.type == 'MESH':
-                        col.separator()
-                        col.operator(JIGGLE_OT_mesh_collision_tooltip_operator.bl_idname, icon='ERROR')
-                        break
         layout.operator(ANIM_OT_JiggleClearKeyframes.bl_idname)
-        if not is_bone_animated(b.id_data, b.name):
-            layout.operator(JIGGLE_OT_no_keyframe_tooltip_operator.bl_idname, icon='ERROR')
-        for c in b.constraints:
-            if c.enabled:
-                layout.operator(JIGGLE_OT_constraints_tooltip_operator.bl_idname, icon='ERROR')
-                break
-        if b.bone.use_connect:
-            layout.operator(JIGGLE_OT_connected_tooltip_operator.bl_idname, icon='ERROR')
-            
 
 class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
     bl_label = 'Global Jiggle Utilities'
@@ -890,6 +950,7 @@ class JiggleScene(bpy.types.PropertyGroup):
     bake_overwrite: bpy.props.BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
     bake_nla: bpy.props.BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
     is_rendering: bpy.props.BoolProperty(default=False)
+    show_no_keyframes_warning: bpy.props.BoolProperty(default=True, options={'HIDDEN'})
     enable: bpy.props.BoolProperty(
         name = 'Enable Scene',
         description = 'Enable jiggle on this scene',
@@ -1018,12 +1079,13 @@ def register():
     bpy.utils.register_class(ARMATURE_OT_JiggleBake)
     bpy.utils.register_class(JIGGLE_PT_Settings)
     bpy.utils.register_class(JIGGLE_PT_Bone)
+    bpy.utils.register_class(JIGGLE_PT_NoKeyframesWarning)
+    bpy.utils.register_class(JIGGLE_PT_BoneConstraintsWarning)
+    bpy.utils.register_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.register_class(JIGGLE_PT_Utilities)
     bpy.utils.register_class(JIGGLE_PT_Bake)
-    bpy.utils.register_class(JIGGLE_OT_no_keyframe_tooltip_operator)
-    bpy.utils.register_class(JIGGLE_OT_connected_tooltip_operator)
-    bpy.utils.register_class(JIGGLE_OT_constraints_tooltip_operator)
-    bpy.utils.register_class(JIGGLE_OT_mesh_collision_tooltip_operator)
+    bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
+    bpy.utils.register_class(JIGGLE_OT_bone_constraints_disable)
     
     bpy.app.handlers.frame_change_pre.append(jiggle_pre)
     bpy.app.handlers.frame_change_post.append(jiggle_post)
@@ -1046,12 +1108,13 @@ def unregister():
     bpy.utils.unregister_class(ARMATURE_OT_JiggleBake)
     bpy.utils.unregister_class(JIGGLE_PT_Settings)
     bpy.utils.unregister_class(JIGGLE_PT_Bone)
+    bpy.utils.unregister_class(JIGGLE_PT_NoKeyframesWarning)
+    bpy.utils.unregister_class(JIGGLE_PT_BoneConstraintsWarning)
+    bpy.utils.unregister_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.unregister_class(JIGGLE_PT_Utilities)
     bpy.utils.unregister_class(JIGGLE_PT_Bake)
-    bpy.utils.unregister_class(JIGGLE_OT_no_keyframe_tooltip_operator)
-    bpy.utils.unregister_class(JIGGLE_OT_connected_tooltip_operator)
-    bpy.utils.unregister_class(JIGGLE_OT_constraints_tooltip_operator)
-    bpy.utils.unregister_class(JIGGLE_OT_mesh_collision_tooltip_operator)
+    bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
+    bpy.utils.unregister_class(JIGGLE_OT_bone_constraints_disable)
     
     bpy.app.handlers.frame_change_pre.remove(jiggle_pre)
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
