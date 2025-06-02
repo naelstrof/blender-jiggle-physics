@@ -171,7 +171,7 @@ class VirtualParticle:
 
     def apply_pose(self):
         if not self.child:
-            if bpy.context.scene.jiggle.debug:
+            if bpy.context.scene.jiggle.rest_pose_overlay:
                 self.debug = self.pose
             return
 
@@ -318,6 +318,14 @@ def get_child(b):
             return child
     return None
 
+def overlay_state_updated(self, context):
+    global jiggle_overlay_handler
+    if (not context.scene.jiggle.rest_pose_overlay and not context.scene.jiggle.simulation_overlay) and jiggle_overlay_handler:
+        bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
+        jiggle_overlay_handler = None
+    elif context.scene.jiggle.rest_pose_overlay or context.scene.jiggle.simulation_overlay:
+        jiggle_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
+
 def billboard_circle(verts, center, radius, segments=16):
     rv3d = bpy.context.region_data
     view_matrix = rv3d.view_matrix
@@ -334,38 +342,31 @@ def billboard_circle(verts, center, radius, segments=16):
 
 @persistent
 def draw_callback():
-    if not bpy.context.scene.jiggle.enable or not bpy.context.scene.jiggle.debug:
+    if not bpy.context.scene.jiggle.enable or (not bpy.context.scene.jiggle.rest_pose_overlay and not bpy.context.scene.jiggle.simulation_overlay):
         return
     virtual_particles = get_virtual_particles(bpy.context.scene)
     verts = []
+    rest_pose_overlay_verts = []
     for particle in virtual_particles:
         if particle.parent:
+            rest_pose_overlay_verts.append(particle.parent.debug)
+            rest_pose_overlay_verts.append(particle.debug)
             verts.append(particle.parent.working_position)
             verts.append(particle.working_position)
     for particle in virtual_particles:
         if particle.parent and particle.bone.jiggle.collider:
             billboard_circle(verts, particle.working_position, particle.bone.jiggle_collision_radius)
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    batch = batch_for_shader(shader, 'LINES', {"pos": verts})
     shader.bind()
-    shader.uniform_float("color", (1, 0, 0, 1))
-    batch.draw(shader)
+    if bpy.context.scene.jiggle.rest_pose_overlay:
+        batch1 = batch_for_shader(shader, 'LINES', {"pos": rest_pose_overlay_verts})
+        shader.uniform_float("color", (0, 1, 0, 1))
+        batch1.draw(shader)
 
-@persistent
-def draw_callback_pose():
-    if not bpy.context.scene.jiggle.enable or not bpy.context.scene.jiggle.debug:
-        return
-    virtual_particles = get_virtual_particles(bpy.context.scene)
-    coords = []
-    for particle in virtual_particles:
-        if particle.parent:
-            coords.append(particle.parent.debug)
-            coords.append(particle.debug)
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    batch = batch_for_shader(shader, 'LINES', {"pos": coords})
-    shader.bind()
-    shader.uniform_float("color", (0, 1, 0, 1))
-    batch.draw(shader)
+    if bpy.context.scene.jiggle.simulation_overlay:
+        batch2 = batch_for_shader(shader, 'LINES', {"pos": verts})
+        shader.uniform_float("color", (1, 0, 0, 1))
+        batch2.draw(shader)
         
 @persistent                
 def jiggle_post(scene,depsgraph):
@@ -442,38 +443,88 @@ def jiggle_load(scene):
     s = bpy.context.scene
     s.jiggle.is_rendering = False
             
-class SCENE_OT_JiggleDebugEnable(bpy.types.Operator):
-    """Enable jiggle debug view"""
-    bl_idname = "scene.jiggle_debug_enable"
-    bl_label = "Enable Debug View"
+class SCENE_OT_JiggleRestPoseOverlayEnable(bpy.types.Operator):
+    """Enable jiggle rest pose overlay view"""
+    bl_idname = "scene.jiggle_rest_pose_overlay_enable"
+    bl_label = "Enable Jiggle Physics Rest Pose Overlay"
 
     @classmethod
     def poll(cls,context):
-        return not context.scene.jiggle.debug
+        return context.scene.jiggle.enable and not context.scene.jiggle.rest_pose_overlay
 
     def execute(self,context):
-        context.scene.jiggle.debug = True
-        global jiggle_debug_handler
-        global jiggle_debug_handler2
-        jiggle_debug_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-        jiggle_debug_handler2 = bpy.types.SpaceView3D.draw_handler_add(draw_callback_pose, (), 'WINDOW', 'POST_VIEW')
+        context.scene.jiggle.rest_pose_overlay = True
         return {'FINISHED'}
 
-class SCENE_OT_JiggleDebugDisable(bpy.types.Operator):
-    """Disable jiggle debug view"""
-    bl_idname = "scene.jiggle_debug_disable"
-    bl_label = "Disable Debug View"
+class SCENE_OT_JiggleRestPoseOverlayToggle(bpy.types.Operator):
+    """Toggle jiggle rest pose overlay view"""
+    bl_idname = "scene.jiggle_rest_pose_overlay_toggle"
+    bl_label = "Toggle Jiggle Physics Rest Pose Overlay"
 
     @classmethod
     def poll(cls,context):
-        return context.scene.jiggle.debug
+        return context.scene.jiggle.enable
 
     def execute(self,context):
-        context.scene.jiggle.debug = False
-        global jiggle_debug_handler
-        global jiggle_debug_handler2
-        bpy.types.SpaceView3D.draw_handler_remove(jiggle_debug_handler, 'WINDOW')
-        bpy.types.SpaceView3D.draw_handler_remove(jiggle_debug_handler2, 'WINDOW')
+        if context.scene.jiggle.rest_pose_overlay:
+            context.scene.jiggle.rest_pose_overlay = False
+        else:
+            context.scene.jiggle.rest_pose_overlay = True
+        return {'FINISHED'}
+
+class SCENE_OT_JiggleRestPoseOverlayDisable(bpy.types.Operator):
+    """Disable jiggle rest pose overlay view"""
+    bl_idname = "scene.jiggle_rest_pose_overlay_disable"
+    bl_label = "Disable Jiggle Physics Rest Pose Overlay"
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.scene.jiggle.rest_pose_overlay
+
+    def execute(self,context):
+        context.scene.jiggle.rest_pose_overlay = False
+        return {'FINISHED'}
+
+class SCENE_OT_JiggleSimulationOverlayEnable(bpy.types.Operator):
+    """Enable jiggle simulation overlay view"""
+    bl_idname = "scene.jiggle_simulation_overlay_enable"
+    bl_label = "Enable Jiggle Physics Simulation Overlay"
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and not context.scene.jiggle.simulation_overlay
+
+    def execute(self,context):
+        context.scene.jiggle.simulation_overlay = True
+        return {'FINISHED'}
+
+class SCENE_OT_JiggleSimulationOverlayToggle(bpy.types.Operator):
+    """Toggle jiggle simulation overlay view"""
+    bl_idname = "scene.jiggle_simulation_overlay_toggle"
+    bl_label = "Toggle Jiggle Physics Simulation Overlay"
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable
+
+    def execute(self,context):
+        if context.scene.jiggle.simulation_overlay:
+            context.scene.jiggle.simulation_overlay = False
+        else:
+            context.scene.jiggle.simulation_overlay = True
+        return {'FINISHED'}
+
+class SCENE_OT_JiggleSimulationOverlayDisable(bpy.types.Operator):
+    """Disable jiggle simulation overlay view"""
+    bl_idname = "scene.jiggle_simulation_overlay_disable"
+    bl_label = "Disable Jiggle Physics Simulation Overlay"
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.scene.jiggle.simulation_overlay
+
+    def execute(self,context):
+        context.scene.jiggle.simulation_overlay = False
         return {'FINISHED'}
 
 class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
@@ -649,15 +700,17 @@ class JigglePanel:
     def poll(cls,context):
         return context.object
 
+def draw_jiggle_overlay_menu(self, context):
+    self.layout.label(text="Jiggle Physics")
+    row = self.layout.row(align=True)
+    row.prop(context.scene.jiggle, "rest_pose_overlay", text="Rest Pose Overlay")
+    row.prop(context.scene.jiggle, "simulation_overlay", text="Simulation Overlay")
+
 class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
     bl_label = "Jiggle Physics"
         
     def draw(self,context):
         row = self.layout.row()
-        if context.scene.jiggle.debug:
-            row.operator(SCENE_OT_JiggleDebugDisable.bl_idname, icon='RADIOBUT_ON', text="", emboss=False)
-        else:
-            row.operator(SCENE_OT_JiggleDebugEnable.bl_idname, icon='RADIOBUT_OFF', text="", emboss=False)
 
         icon = 'HIDE_ON' if not context.scene.jiggle.enable else 'SCENE_DATA'
         row.prop(context.scene.jiggle, "enable", icon=icon, text="",emboss=False)
@@ -966,10 +1019,24 @@ class JiggleScene(bpy.types.PropertyGroup):
         override={'LIBRARY_OVERRIDABLE'},
     )
     debug: bpy.props.BoolProperty(
-        name = 'Enable Debug',
-        description = 'Enable drawing of jiggle debug lines. Green is the detected rest pose, red is the simulated physics pose. This is slow so disable when not needed',
+        name = 'Enable debug',
+        description = 'Enable profiling and debug features',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
+    )
+    rest_pose_overlay: bpy.props.BoolProperty(
+        name = 'Enable Rest Pose Overlay',
+        description = 'Enable drawing of jiggle rest pose lines. Green is the detected rest pose.',
+        default = False,
+        override={'LIBRARY_OVERRIDABLE'},
+        update=overlay_state_updated
+    )
+    simulation_overlay: bpy.props.BoolProperty(
+        name = 'Enable Simulation Overlay',
+        description = 'Enable drawing of jiggle simulation lines and collision radiuses.',
+        default = False,
+        override={'LIBRARY_OVERRIDABLE'},
+        update=overlay_state_updated
     )
 
 class JiggleObject(bpy.types.PropertyGroup):
@@ -1091,8 +1158,14 @@ def register():
     bpy.utils.register_class(JIGGLE_PT_Bake)
     bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.register_class(JIGGLE_OT_bone_constraints_disable)
-    bpy.utils.register_class(SCENE_OT_JiggleDebugEnable)
-    bpy.utils.register_class(SCENE_OT_JiggleDebugDisable)
+    bpy.utils.register_class(SCENE_OT_JiggleRestPoseOverlayEnable)
+    bpy.utils.register_class(SCENE_OT_JiggleRestPoseOverlayDisable)
+    bpy.utils.register_class(SCENE_OT_JiggleRestPoseOverlayToggle)
+    bpy.utils.register_class(SCENE_OT_JiggleSimulationOverlayEnable)
+    bpy.utils.register_class(SCENE_OT_JiggleSimulationOverlayDisable)
+    bpy.utils.register_class(SCENE_OT_JiggleSimulationOverlayToggle)
+
+    bpy.types.VIEW3D_PT_overlay.append(draw_jiggle_overlay_menu)
     
     bpy.app.handlers.frame_change_post.append(jiggle_post)
     bpy.app.handlers.render_pre.append(jiggle_render_pre)
@@ -1119,8 +1192,14 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_PT_Bake)
     bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.unregister_class(JIGGLE_OT_bone_constraints_disable)
-    bpy.utils.unregister_class(SCENE_OT_JiggleDebugEnable)
-    bpy.utils.unregister_class(SCENE_OT_JiggleDebugDisable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleRestPoseOverlayEnable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleRestPoseOverlayDisable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleRestPoseOverlayToggle)
+    bpy.utils.unregister_class(SCENE_OT_JiggleSimulationOverlayEnable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleSimulationOverlayDisable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleSimulationOverlayToggle)
+
+    bpy.types.VIEW3D_PT_overlay.remove(draw_jiggle_overlay_menu)
     
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
     bpy.app.handlers.render_pre.remove(jiggle_render_pre)
