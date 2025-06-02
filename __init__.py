@@ -367,21 +367,6 @@ def draw_callback_pose():
     shader.uniform_float("color", (0, 1, 0, 1))
     batch.draw(shader)
         
-@persistent
-def jiggle_pre(scene):
-    if scene.jiggle.debug: _profiler.enable()
-    if (scene.jiggle.lastframe == scene.frame_current) or scene.jiggle.is_rendering:
-        if scene.jiggle.debug: _profiler.disable()
-        return
-
-    if not scene.jiggle.enable:
-        reset_scene()
-        if scene.jiggle.debug: _profiler.disable()
-        return
-
-    if scene.jiggle.debug: _profiler.disable()
-
-
 @persistent                
 def jiggle_post(scene,depsgraph):
     if scene.jiggle.debug: _profiler.enable()
@@ -1121,7 +1106,6 @@ def register():
     bpy.utils.register_class(SCENE_OT_JiggleDebugEnable)
     bpy.utils.register_class(SCENE_OT_JiggleDebugDisable)
     
-    bpy.app.handlers.frame_change_pre.append(jiggle_pre)
     bpy.app.handlers.frame_change_post.append(jiggle_post)
     bpy.app.handlers.render_pre.append(jiggle_render_pre)
     bpy.app.handlers.render_post.append(jiggle_render_post)
@@ -1150,7 +1134,6 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_JiggleDebugEnable)
     bpy.utils.unregister_class(SCENE_OT_JiggleDebugDisable)
     
-    bpy.app.handlers.frame_change_pre.remove(jiggle_pre)
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
     bpy.app.handlers.render_pre.remove(jiggle_render_pre)
     bpy.app.handlers.render_post.remove(jiggle_render_post)
