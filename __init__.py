@@ -707,18 +707,6 @@ class JIGGLE_OT_bone_connected_disable(bpy.types.Operator):
         bpy.ops.object.mode_set(mode=previous_mode)
         return {'FINISHED'}
 
-class JIGGLE_OT_mesh_collision_tooltip_operator(bpy.types.Operator):
-    bl_idname = "armature.jiggle_mesh_collision_tooltip"
-    bl_label = "Mesh Collision Detected"
-    bl_description = "Meshes are not convex, making them bad for collisions. Please use Empty spheres instead (Add -> Empty -> Sphere)"
-
-    @classmethod
-    def poll(cls,context):
-        return context.object and context.active_pose_bone
-
-    def execute(self, context):
-        return {'FINISHED'}
-
 class JIGGLE_OT_bone_constraints_disable(bpy.types.Operator):
     bl_idname = "armature.jiggle_bone_constraints_disable"
     bl_label = "Disable Constraints"
