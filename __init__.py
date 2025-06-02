@@ -81,7 +81,6 @@ class VirtualParticle:
         velocity = delta - local_space_velocity
         self.working_position = self.position + velocity * (1.0-self.bone.jiggle_air_drag) + local_space_velocity * (1.0-self.bone.jiggle_friction) + gravity * self.bone.jiggle_gravity * dt2
 
-
     def mesh_collide(self, collider, depsgraph):
         collider_matrix = collider.matrix_world
         local_working_position = collider_matrix.inverted() @ self.working_position
@@ -458,6 +457,40 @@ def jiggle_load(scene):
     s = bpy.context.scene
     s.jiggle.is_rendering = False
             
+class SCENE_OT_JiggleDebugEnable(bpy.types.Operator):
+    """Enable jiggle debug view"""
+    bl_idname = "scene.jiggle_debug_enable"
+    bl_label = "Enable Debug View"
+
+    @classmethod
+    def poll(cls,context):
+        return not context.scene.jiggle.debug
+
+    def execute(self,context):
+        context.scene.jiggle.debug = True
+        global jiggle_debug_handler
+        global jiggle_debug_handler2
+        jiggle_debug_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
+        jiggle_debug_handler2 = bpy.types.SpaceView3D.draw_handler_add(draw_callback_pose, (), 'WINDOW', 'POST_VIEW')
+        return {'FINISHED'}
+
+class SCENE_OT_JiggleDebugDisable(bpy.types.Operator):
+    """Disable jiggle debug view"""
+    bl_idname = "scene.jiggle_debug_disable"
+    bl_label = "Disable Debug View"
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.debug
+
+    def execute(self,context):
+        context.scene.jiggle.debug = False
+        global jiggle_debug_handler
+        global jiggle_debug_handler2
+        bpy.types.SpaceView3D.draw_handler_remove(jiggle_debug_handler, 'WINDOW')
+        bpy.types.SpaceView3D.draw_handler_remove(jiggle_debug_handler2, 'WINDOW')
+        return {'FINISHED'}
+
 class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
     """Copy active jiggle settings to selected bones"""
     bl_idname = "armature.jiggle_copy"
@@ -629,15 +662,17 @@ class JigglePanel:
     
     @classmethod
     def poll(cls,context):
-        return context.object  
+        return context.object
 
 class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
     bl_label = "Jiggle Physics"
         
     def draw(self,context):
         row = self.layout.row()
-        icon = 'RADIOBUT_OFF' if not context.scene.jiggle.debug else 'RADIOBUT_ON'
-        row.prop(context.scene.jiggle, "debug", icon=icon, text="",emboss=False)
+        if context.scene.jiggle.debug:
+            row.operator(SCENE_OT_JiggleDebugDisable.bl_idname, icon='RADIOBUT_ON', text="", emboss=False)
+        else:
+            row.operator(SCENE_OT_JiggleDebugEnable.bl_idname, icon='RADIOBUT_OFF', text="", emboss=False)
 
         icon = 'HIDE_ON' if not context.scene.jiggle.enable else 'SCENE_DATA'
         row.prop(context.scene.jiggle, "enable", icon=icon, text="",emboss=False)
@@ -986,10 +1021,6 @@ class JiggleObject(bpy.types.PropertyGroup):
     )
 
 def register():
-    global debug_handler
-    global debug_handler2
-    debug_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-    debug_handler2 = bpy.types.SpaceView3D.draw_handler_add(draw_callback_pose, (), 'WINDOW', 'POST_VIEW')
     
     # These properties are strictly animatable properties, as nested properties cannot be animated on pose bones.
     bpy.types.PoseBone.jiggle_angle_elasticity = bpy.props.FloatProperty(
@@ -1071,6 +1102,7 @@ def register():
     bpy.utils.register_class(JiggleScene)
     bpy.types.Scene.jiggle = bpy.props.PointerProperty(type=JiggleScene, override={'LIBRARY_OVERRIDABLE'})
     
+
     bpy.utils.register_class(SCENE_OT_JiggleReset)
     bpy.utils.register_class(ANIM_OT_JiggleClearKeyframes)
     bpy.utils.register_class(SCENE_OT_JiggleProfile)
@@ -1086,6 +1118,8 @@ def register():
     bpy.utils.register_class(JIGGLE_PT_Bake)
     bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.register_class(JIGGLE_OT_bone_constraints_disable)
+    bpy.utils.register_class(SCENE_OT_JiggleDebugEnable)
+    bpy.utils.register_class(SCENE_OT_JiggleDebugDisable)
     
     bpy.app.handlers.frame_change_pre.append(jiggle_pre)
     bpy.app.handlers.frame_change_post.append(jiggle_post)
@@ -1095,8 +1129,6 @@ def register():
     bpy.app.handlers.load_post.append(jiggle_load)
 
 def unregister():
-    global debug_handler
-    global debug_handler2
     bpy.utils.unregister_class(JiggleBone)
     bpy.utils.unregister_class(JiggleObject)
     bpy.utils.unregister_class(JiggleScene)
@@ -1115,6 +1147,8 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_PT_Bake)
     bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.unregister_class(JIGGLE_OT_bone_constraints_disable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleDebugEnable)
+    bpy.utils.unregister_class(SCENE_OT_JiggleDebugDisable)
     
     bpy.app.handlers.frame_change_pre.remove(jiggle_pre)
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
@@ -1122,8 +1156,6 @@ def unregister():
     bpy.app.handlers.render_post.remove(jiggle_render_post)
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
     bpy.app.handlers.load_post.remove(jiggle_load)
-    bpy.types.SpaceView3D.draw_handler_remove(debug_handler, 'WINDOW')
-    bpy.types.SpaceView3D.draw_handler_remove(debug_handler2, 'WINDOW')
     
 if __name__ == "__main__":
     register()
