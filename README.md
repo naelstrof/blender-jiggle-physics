@@ -30,13 +30,16 @@ Uses the same solver as [Unity Jiggle Physics](https://github.com/naelstrof/Unit
 
 [Screencast_20250531_141235.webm](https://github.com/user-attachments/assets/982a9b62-2b65-44ae-9f07-6b0b5650067d)
 
-### Debug Mode
+### Overlays
 
-An easily accessible debug mode allows you to see the system's detected rest pose (in green), and the simulation (in red).
+Easily accessible overlays allow you to see the system's detected rest pose (in green), and the simulation (in red).
 
-![image](https://github.com/user-attachments/assets/14ce81d1-d3be-49e1-a2e8-37e0c278ab85)
+![double view with only one showing the overlay](https://github.com/user-attachments/assets/14ce81d1-d3be-49e1-a2e8-37e0c278ab85)
 
-As a bonus, cProfile is enabled with Debug Mode so you can analyze the cost of Jiggle Physics calculations.
+You can use this to visualize collision radius of bones:
+
+![collision radius on a dragon tail and ears](https://github.com/user-attachments/assets/e2957f2f-a097-4ead-978d-fd85fead1e20)
+
 
 ## Usage
 
