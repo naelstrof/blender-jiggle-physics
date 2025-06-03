@@ -38,8 +38,7 @@ Easily accessible overlays allow you to see the system's detected rest pose (in 
 
 You can use this to visualize collision radius of bones:
 
-![collision radius on a dragon tail and ears](https://github.com/user-attachments/assets/e2957f2f-a097-4ead-978d-fd85fead1e20)
-
+![collision radius on a dragon's tail and ears](https://github.com/user-attachments/assets/02a8ee21-f650-4809-8be3-12f81cbdcea7)
 
 ## Usage
 
