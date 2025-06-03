@@ -95,9 +95,14 @@ class VirtualParticle:
         location = collider_matrix @ local_location
         normal = collider_matrix.to_quaternion() @ local_normal
         diff = self.working_position-location
-        if (diff).length > self.bone.jiggle_collision_radius:
+
+        local_radius = self.bone.jiggle_collision_radius
+        bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
+        world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
+
+        if (diff).length > world_radius:
             return
-        self.working_position = location + diff.normalized() * self.bone.jiggle_collision_radius
+        self.working_position = location + diff.normalized() * world_radius
 
     def empty_collide(self, collider):
         collider_matrix = collider.matrix_world
@@ -395,8 +400,6 @@ def draw_callback():
             rest_pose_overlay_verts.append(particle.rest_pose_position)
             verts.append(particle.parent.working_position)
             verts.append(particle.working_position)
-    for particle in virtual_particles:
-        if particle.parent and particle.bone.jiggle.collider:
             local_radius = particle.bone.jiggle_collision_radius
             bone_matrix_world = particle.bone.id_data.matrix_world @ particle.bone.matrix
             world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
@@ -966,9 +969,8 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
                 else:
                     row.label(text='',icon='UNLINKED')
             
-        if collision:
-            col = layout.column(align=True)
-            drawprops(col,b,['jiggle_collision_radius'])
+        col = layout.column(align=True)
+        drawprops(col,b,['jiggle_collision_radius'])
         layout.operator(ANIM_OT_JiggleClearKeyframes.bl_idname)
 
 class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
