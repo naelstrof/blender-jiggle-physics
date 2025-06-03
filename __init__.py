@@ -339,9 +339,9 @@ def billboard_circle(verts, center, radius, segments=16):
 
 @persistent
 def draw_callback():
-    #if not bpy.context.scene.jiggle.enable or (not bpy.context.scene.jiggle.rest_pose_overlay and not bpy.context.scene.jiggle.simulation_overlay):
-        #return
     if not bpy.context.scene.jiggle.enable:
+        return
+    if not bpy.context.area or not any(space.type == 'VIEW_3D' and space.overlay.show_overlays for space in bpy.context.area.spaces):
         return
     do_pose = area_pose_overlay.get(bpy.context.area.as_pointer(), False)
     do_simulation = area_simulation_overlay.get(bpy.context.area.as_pointer(), False)
@@ -369,12 +369,12 @@ def draw_callback():
 
     if do_pose:
         batch1 = batch_for_shader(shader, 'LINES', {"pos": rest_pose_overlay_verts})
-        shader.uniform_float("color", (0, 1, 0, 1))
+        shader.uniform_float("color", (0.10196078431372549, 1, 0.10196078431372549, 1))
         batch1.draw(shader)
 
     if do_simulation:
         batch2 = batch_for_shader(shader, 'LINES', {"pos": verts})
-        shader.uniform_float("color", (1, 0, 0, 1))
+        shader.uniform_float("color", (0.29411764705882354, 0, 0.5725490196078431, 1))
         batch2.draw(shader)
         
 @persistent                
@@ -488,7 +488,7 @@ def jiggle_reset(context):
     context.scene.jiggle.lastframe = context.scene.frame_current
 
 class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
-    """Toggle jiggle overlay in 3D View"""
+    """Toggle the detected rest pose overlay"""
     bl_idname = "view3d.jiggle_toggle_pose_overlay"
     bl_label = "Toggle Jiggle Rest Pose Overlay"
     
@@ -521,7 +521,7 @@ class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
         return {'FINISHED'}
 
 class VIEW3D_OT_JiggleToggleSimulationOverlay(bpy.types.Operator):
-    """Toggle jiggle overlay in 3D View"""
+    """Toggle the jiggle simulation overlay"""
     bl_idname = "view3d.jiggle_toggle_simulation_overlay"
     bl_label = "Toggle Jiggle Simulation Overlay"
     
@@ -831,7 +831,7 @@ class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'Bones that are connected cannot be translated, preventing them from stretching.')
         box.label(text=f'This makes them ignore length elasticity.')
         box.label(text=f'You can safely ignore this if stretchiness is not desired.')
-        self.layout.operator(JIGGLE_OT_bone_connected_disable.bl_idname, text='Disable Constraints on Selected Bones')
+        self.layout.operator(JIGGLE_OT_bone_connected_disable.bl_idname, text='Disconnect Selected Bones')
 
 
 class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
