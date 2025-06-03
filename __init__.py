@@ -24,6 +24,7 @@ class VirtualParticle:
         self.rolling_error = IDENTITY_QUAT
         self.jiggle = bone.jiggle
         self.desired_length_to_parent = 1
+        self.children = []
         self.bone_length_change = 0
         match particleType:
             case 'backProject':
@@ -57,6 +58,7 @@ class VirtualParticle:
             self.parent_pose = (self.pose-child.pose) + self.pose
         else:
             self.child = child
+        self.children.append(child)
 
     def write(self):
         match self.particleType:
@@ -196,11 +198,22 @@ class VirtualParticle:
         if not self.parent:
             return
 
-        cachedAnimatedVector = (local_child_pose - local_pose).normalized()
-        simulatedVector = (local_child_working_position - local_working_position).normalized()
+        if len(self.children) <= 1:
+            cachedAnimatedVector = (local_child_pose - local_pose).normalized()
+            simulatedVector = (local_child_working_position - local_working_position).normalized()
+        else:
+            cachedAnimatedVectorSum = Vector((0,0,0))
+            simulatedVectorSum = Vector((0,0,0))
+            for child in self.children:
+                local_child_pose = (inverted_obj_matrix@child.pose)
+                local_child_working_position = (inverted_obj_matrix@child.working_position)
+                cachedAnimatedVectorSum += (local_child_pose - local_pose).normalized()
+                simulatedVectorSum += (local_child_working_position - local_working_position).normalized()
+            cachedAnimatedVector = cachedAnimatedVectorSum * (1.0/len(self.children))
+            simulatedVector = simulatedVectorSum * (1.0/len(self.children))
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.bone.jiggle_blend).normalized()
 
-        if self.parent.parent:
+        if self.parent.parent and len(self.parent.children) == 1:
             loc, rot, scale = self.bone.matrix.decompose()
             if self.bone.bone.use_inherit_rotation:
                 prot = self.parent.rolling_error.inverted()
@@ -211,8 +224,20 @@ class VirtualParticle:
             new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
             self.bone.matrix = new_matrix
             self.rolling_error = animPoseToPhysicsPose
-        else:
+        elif len(self.parent.children) == 1:
             diff = local_working_position-local_pose
+            diff = diff.lerp(ZERO_VEC, 1-self.bone.jiggle_blend)
+            loc, rot, scale = self.bone.matrix.decompose()
+            new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
+            self.bone.matrix = new_matrix 
+            self.rolling_error = animPoseToPhysicsPose
+        else:
+            parent_local_working_position = (inverted_obj_matrix@self.parent.working_position)
+            parent_to_working = local_working_position - parent_local_working_position
+            rot_adjusted_local_working_position = self.parent.rolling_error.inverted() @ parent_to_working
+            rot_adjusted_local_working_position += parent_local_working_position
+
+            diff = rot_adjusted_local_working_position-local_pose
             diff = diff.lerp(ZERO_VEC, 1-self.bone.jiggle_blend)
             loc, rot, scale = self.bone.matrix.decompose()
             new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
