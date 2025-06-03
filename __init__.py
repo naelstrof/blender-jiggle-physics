@@ -100,7 +100,11 @@ class VirtualParticle:
     def empty_collide(self, collider):
         collider_matrix = collider.matrix_world
 
-        world_vec = (self.working_position-collider_matrix.translation).normalized()*self.bone.jiggle_collision_radius;
+        local_radius = self.bone.jiggle_collision_radius
+        bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
+        world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
+
+        world_vec = (self.working_position-collider_matrix.translation).normalized()*world_radius;
         local_vec = collider_matrix.inverted().to_3x3() @ world_vec
 
         local_working_position = collider_matrix.inverted() @ self.working_position
@@ -217,7 +221,7 @@ class VirtualParticle:
 
 def get_virtual_particles(scene):
     virtual_particles = []
-    jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze and obj.visible_get()]
+    jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze]
     for ob in jiggle_objs:
         pose_bones = ob.pose.bones
         bones = [bone for bone in pose_bones if getattr(bone.jiggle, 'enable', False)]
@@ -356,7 +360,10 @@ def draw_callback():
             verts.append(particle.working_position)
     for particle in virtual_particles:
         if particle.parent and particle.bone.jiggle.collider:
-            billboard_circle(verts, particle.working_position, particle.bone.jiggle_collision_radius)
+            local_radius = particle.bone.jiggle_collision_radius
+            bone_matrix_world = particle.bone.id_data.matrix_world @ particle.bone.matrix
+            world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
+            billboard_circle(verts, particle.working_position, world_radius)
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
 
@@ -690,13 +697,10 @@ def draw_jiggle_overlay_menu(self, context):
     row = self.layout.row(align=True)
     area = area_pose_overlay.get(context.area.as_pointer(), False)
     icon = 'CHECKBOX_HLT' if area else 'CHECKBOX_DEHLT'
-    # Operator button that looks like a checkbox
     row.operator(VIEW3D_OT_JiggleTogglePoseOverlay.bl_idname, text="Show Rest Pose", icon=icon, emboss=False)
     area = area_simulation_overlay.get(context.area.as_pointer(), False)
     icon = 'CHECKBOX_HLT' if area else 'CHECKBOX_DEHLT'
     row.operator(VIEW3D_OT_JiggleToggleSimulationOverlay.bl_idname, text="Show Simulation", icon=icon, emboss=False)
-    #row.prop(context.scene.jiggle, "rest_pose_overlay", text="Rest Pose Overlay")
-    #row.prop(context.scene.jiggle, "simulation_overlay", text="Simulation Overlay")
 
 class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
     bl_label = "Jiggle Physics"
@@ -808,6 +812,27 @@ class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'Click the button below to automatically disable constraints on selected bones.')
         box.label(text=f'You can safely ignore this if you are intending to constrain the jiggle pose.')
         self.layout.operator(JIGGLE_OT_bone_constraints_disable.bl_idname, text='Disable Constraints on Selected Bones')
+
+class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,bpy.types.Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+    
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.object and not context.object.jiggle.mute and context.active_pose_bone and context.active_pose_bone.jiggle.enable and any(bone.bone.use_connect for bone in context.selected_pose_bones)
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='Connected Bones Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Bones that are connected cannot be translated, preventing them from stretching.')
+        box.label(text=f'This makes them ignore length elasticity.')
+        box.label(text=f'You can safely ignore this if stretchiness is not desired.')
+        self.layout.operator(JIGGLE_OT_bone_connected_disable.bl_idname, text='Disable Constraints on Selected Bones')
+
 
 class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
     bl_label = ''
@@ -1128,6 +1153,7 @@ def register():
     bpy.utils.register_class(JIGGLE_PT_Settings)
     bpy.utils.register_class(JIGGLE_PT_Bone)
     bpy.utils.register_class(JIGGLE_PT_NoKeyframesWarning)
+    bpy.utils.register_class(JIGGLE_PT_ConnectedBonesWarning)
     bpy.utils.register_class(JIGGLE_PT_BoneConstraintsWarning)
     bpy.utils.register_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.register_class(JIGGLE_PT_Utilities)
@@ -1158,6 +1184,7 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_PT_Settings)
     bpy.utils.unregister_class(JIGGLE_PT_Bone)
     bpy.utils.unregister_class(JIGGLE_PT_NoKeyframesWarning)
+    bpy.utils.unregister_class(JIGGLE_PT_ConnectedBonesWarning)
     bpy.utils.unregister_class(JIGGLE_PT_BoneConstraintsWarning)
     bpy.utils.unregister_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.unregister_class(JIGGLE_PT_Utilities)
