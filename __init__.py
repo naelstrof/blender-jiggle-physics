@@ -219,6 +219,20 @@ class VirtualParticle:
             self.bone.matrix = new_matrix 
             self.rolling_error = animPoseToPhysicsPose
 
+def get_last_particle(obj, last_particle, virtual_particles, bone):
+    p = get_parent(bone)
+    if last_particle is None or p != last_particle.bone:
+        if p:
+            # Enumerate backwards as the necessary particle is almost certainly near the end.
+            for particle in virtual_particles[::-1]:
+                if particle.bone == p:
+                    return particle
+        root_particle = VirtualParticle(obj, bone, 'backProject')
+        virtual_particles.append(root_particle)
+        return root_particle
+    return last_particle
+
+
 def get_virtual_particles(scene):
     virtual_particles = []
     jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze]
@@ -227,9 +241,7 @@ def get_virtual_particles(scene):
         bones = [bone for bone in pose_bones if getattr(bone.jiggle, 'enable', False)]
         last_particle = None
         for bone in bones:
-            if last_particle is None or get_parent(bone) != last_particle.bone:
-                last_particle = VirtualParticle(ob, bone, 'backProject')
-                virtual_particles.append(last_particle)
+            last_particle = get_last_particle(ob, last_particle, virtual_particles, bone)
             new_particle = VirtualParticle(ob, bone, 'normal')
             new_particle.set_parent(last_particle)
             virtual_particles.append(new_particle)
