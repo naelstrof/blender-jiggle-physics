@@ -218,31 +218,23 @@ class VirtualParticle:
             simulatedVector = simulatedVectorSum * (1.0/len(self.children))
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.bone.jiggle_blend).normalized()
 
-        if self.parent.parent and len(self.parent.children) == 1:
+        if self.parent.parent:
             loc, rot, scale = self.bone.matrix.decompose()
             if self.bone.bone.use_inherit_rotation:
                 prot = self.parent.rolling_error.inverted()
             else:
                 prot = IDENTITY_QUAT
-            dir = (loc - self.parent.bone.head).normalized()
-            loc = loc + dir * lerp(0,self.parent.bone_length_change, self.bone.jiggle_blend)
+
+            parent_pose_aim = local_pose - (inverted_obj_matrix@self.parent_pose) 
+            adjusted_pose = (inverted_obj_matrix@self.parent.working_position) + (self.parent.rolling_error@parent_pose_aim)
+            diff = (inverted_obj_matrix@self.working_position)-adjusted_pose
+
+            loc = loc + (prot@diff) * self.bone.jiggle_blend
             new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
             self.bone.matrix = new_matrix
             self.rolling_error = animPoseToPhysicsPose
-        elif len(self.parent.children) == 1:
-            diff = local_working_position-local_pose
-            diff = diff.lerp(ZERO_VEC, 1-self.bone.jiggle_blend)
-            loc, rot, scale = self.bone.matrix.decompose()
-            new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
-            self.bone.matrix = new_matrix 
-            self.rolling_error = animPoseToPhysicsPose
         else:
-            parent_local_working_position = (inverted_obj_matrix@self.parent.working_position)
-            parent_to_working = local_working_position - parent_local_working_position
-            rot_adjusted_local_working_position = self.parent.rolling_error.inverted() @ parent_to_working
-            rot_adjusted_local_working_position += parent_local_working_position
-
-            diff = rot_adjusted_local_working_position-local_pose
+            diff = local_working_position-local_pose
             diff = diff.lerp(ZERO_VEC, 1-self.bone.jiggle_blend)
             loc, rot, scale = self.bone.matrix.decompose()
             new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
