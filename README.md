@@ -60,6 +60,12 @@ Keep an eye out for warning buttons in the panel, they will detect most issues a
 
 ![warning popup](https://github.com/user-attachments/assets/2fba2440-f106-4476-8301-f41440b4836a)
 
+### It looks perfect during playback, but stops working during render!
+
+This is by design, you must "bake" the jiggles before rendering them.
+
+This is because Blender can render frames out of order by design. To prevent unintended jiggles, jiggle physics always disables itself during render. This also makes the addon "safe" to add to render farms.
+
 ### My bones are drooping away, and something is clearly wrong.
 
 ![droopy solve](https://github.com/user-attachments/assets/38d499f0-4ff3-452f-a088-ee3e2453d4e0)
@@ -76,7 +82,7 @@ The jiggle parameters can be keyframed into animations and actions. There's a ha
 
 Jiggle Physics needs to predict the relationship between bones, and it uses standard parenting to try to understand.
 
-Some more complex rigs might use constraints, bendy bones, or special parenting rules (like ignoring parent positioning) aren't supported well.
+Some more complex rigs might use constraints, bendy bones, or special parenting rules (like ignoring parent positioning) and they aren't supported well.
 
 Try only jiggling deform bones!
 
