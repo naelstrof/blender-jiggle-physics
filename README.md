@@ -72,6 +72,14 @@ Without a position and rotation keyframe, Jiggle Physics doesn't know what the "
 
 The jiggle parameters can be keyframed into animations and actions. There's a handy button to delete all jiggle parameter keys for all selected bones called "Clear Parameter Keyframes" which will attempt to delete them for you. If your keyframes are in an action, make sure that you're tweaking the action first!
 
+### The pose doesn't quite match the simulation.
+
+Jiggle Physics needs to predict the relationship between bones, and it uses standard parenting to try to understand.
+
+Some more complex rigs might use constraints, bendy bones, or special parenting rules (like ignoring parent positioning) aren't supported well.
+
+Try only jiggling deform bones!
+
 ### I'm not getting any stretchy physics on my bones!
 
 "Connected" bones cannot be translated. This prevents jiggle physics from stretching them. If your armature is linked in as an asset then you might need to edit the source file.
