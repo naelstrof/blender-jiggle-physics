@@ -11,6 +11,7 @@ _profiler = cProfile.Profile()
 jiggle_overlay_handler = None
 area_pose_overlay = {}
 area_simulation_overlay = {}
+jiggle_physics_resetting = False
 
 class VirtualParticle:
     def __init__(self, obj, bone, particleType):
@@ -411,6 +412,9 @@ def draw_callback():
         
 @persistent                
 def jiggle_post(scene,depsgraph):
+    global jiggle_physics_resetting
+    if jiggle_physics_resetting:
+        return
     if scene.jiggle.debug: _profiler.enable()
     jiggle = scene.jiggle
     objects = scene.objects
@@ -597,7 +601,15 @@ class SCENE_OT_JiggleReset(bpy.types.Operator):
         return context.scene.jiggle.enable and context.mode in ['OBJECT', 'POSE']
     
     def execute(self,context):
-        jiggle_reset(context)
+        frame = context.scene.frame_current
+        global jiggle_physics_resetting
+        jiggle_physics_resetting = True
+        try:
+            context.scene.frame_set(frame-1)
+            jiggle_reset(context)
+            context.scene.frame_set(frame)
+        finally:
+            jiggle_physics_resetting = False
         return {'FINISHED'}
 
 class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
