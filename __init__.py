@@ -6,6 +6,7 @@ from gpu_extras.batch import batch_for_shader
 ZERO_VEC = Vector((0,0,0))
 IDENTITY_MAT = Matrix.Identity(4)
 IDENTITY_QUAT = Quaternion()
+SAME_BONE_THRESHOLD = 0.0001
 
 _profiler = cProfile.Profile()
 jiggle_overlay_handler = None
@@ -47,10 +48,12 @@ class VirtualParticle:
                 self.pose = (self.obj_world_matrix@bone.tail)
 
     def set_parent(self, parent):
+        if (self.pose - parent.pose).length < SAME_BONE_THRESHOLD:
+            raise ValueError(f"VirtualParticle cannot have a parent with the same pose as itself.{parent.bone.name} -> {self.bone.name}")
         self.parent = parent
         parent.set_child(self)
         self.parent_pose = parent.pose
-        self.desired_length_to_parent = (self.pose - self.parent_pose).length
+        self.desired_length_to_parent = max((self.pose - self.parent_pose).length, SAME_BONE_THRESHOLD)
 
     def set_child(self, child):
         if self.particleType == 'backProject':
@@ -242,19 +245,34 @@ class VirtualParticle:
             self.bone.matrix = new_matrix 
             self.rolling_error = animPoseToPhysicsPose
 
+def find_jiggle_parent(bone):
+    parent = bone.parent
+    while parent:
+        if hasattr(parent, "jiggle") and getattr(parent.jiggle, "enable", False):
+            return parent
+        parent = parent.parent
+    else:
+        return None
+
 def get_last_particle(obj, last_particle, virtual_particles, bone):
-    p = get_parent(bone)
-    if last_particle is None or p != last_particle.bone:
+    p = find_jiggle_parent(bone)
+    if last_particle is None or (p and p != last_particle.bone) or (last_particle.bone.head-bone.head).length < SAME_BONE_THRESHOLD:
         if p:
             # Enumerate backwards as the necessary particle is almost certainly near the end.
             for particle in virtual_particles[::-1]:
                 if particle.bone == p:
-                    return particle
+                    if particle.particleType == "normal":
+                        # If the bones have the same pose, they can't be used as a parent....
+                        if (particle.bone.head - bone.head).length > SAME_BONE_THRESHOLD:
+                            return particle
+                        else:
+                            break
+                    else:
+                        break
         root_particle = VirtualParticle(obj, bone, 'backProject')
         virtual_particles.append(root_particle)
         return root_particle
     return last_particle
-
 
 def get_virtual_particles(scene):
     virtual_particles = []
@@ -342,9 +360,6 @@ def update_nested_jiggle_prop(self,context,prop):
     if prop == 'enable':
         self.id_data.jiggle.enable = True
     jiggle_propagating = False
-
-def get_parent(b):
-    return b.parent
 
 def get_jiggle_parent(b):
     p = b.parent
@@ -436,7 +451,7 @@ def jiggle_post(scene,depsgraph):
     frame_loop = jiggle.loop
 
     if (frame_current == frame_start) and not frame_loop and not frame_is_preroll:
-        jiggle_reset()
+        jiggle_reset(bpy.context)
         if scene.jiggle.debug: _profiler.disable()
         return
 
@@ -853,6 +868,7 @@ class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,bpy.types.Panel):
     def draw(self,context):
         box = self.layout.box()
         box.label(text=f'Bone constraints are applied after jiggle, which can cause strange behavior.')
+        box.label(text=f'Be weary that using constraints in place of parenting can also cause the jiggle pose to not work as intended.')
         box.label(text=f'Click the button below to automatically disable constraints on selected bones.')
         box.label(text=f'You can safely ignore this if you are intending to constrain the jiggle pose.')
         self.layout.operator(JIGGLE_OT_bone_constraints_disable.bl_idname, text='Disable Constraints on Selected Bones')
