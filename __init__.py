@@ -14,6 +14,8 @@ jiggle_overlay_handler = None
 area_pose_overlay = {}
 area_simulation_overlay = {}
 jiggle_physics_resetting = False
+jiggle_object_virtual_point_cache = {}
+jiggle_scene_virtual_point_cache = None
 
 class JiggleSettings:
     def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
@@ -32,32 +34,23 @@ class JiggleSettings:
 STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,0.0,0.0,1.0,0.1)
 
 class VirtualParticle:
-    def __init__(self, obj, bone, particleType, static=False):
-        self.obj_world_matrix = obj.matrix_world
-        self.bone = bone
-        self.particleType = particleType
-        self.parent = None
-        self.pose = ZERO_VEC
-        self.parent_pose = ZERO_VEC
-        self.rolling_error = IDENTITY_QUAT
-        self.desired_length_to_parent = 1
-        self.children = []
-        self.jiggle_settings = None
-        match particleType:
+    def read(self):
+        self.obj_world_matrix = self.obj.matrix_world
+        match self.particleType:
             case 'normal':
-                self.position = bone.jiggle.position1.copy()
-                self.position_last = bone.jiggle.position_last1
-                self.rest_pose_position = bone.jiggle.rest_pose_position1
-                self.pose = (self.obj_world_matrix@bone.head)
+                self.position = self.bone.jiggle.position1.copy()
+                self.position_last = self.bone.jiggle.position_last1
+                self.rest_pose_position = self.bone.jiggle.rest_pose_position1
+                self.pose = (self.obj_world_matrix@self.bone.head)
                 self.working_position = self.position.copy()
-                self.jiggle_settings = JiggleSettings.from_bone(bone) if not static else STATIC_JIGGLE_SETTINGS
+                self.jiggle_settings = JiggleSettings.from_bone(self.bone) if not self.static else STATIC_JIGGLE_SETTINGS
             case 'backProject':
-                self.position = bone.jiggle.position0.copy()
-                self.position_last = bone.jiggle.position_last0
-                self.rest_pose_position = bone.jiggle.rest_pose_position0
+                self.position = self.bone.jiggle.position0.copy()
+                self.position_last = self.bone.jiggle.position_last0
+                self.rest_pose_position = self.bone.jiggle.rest_pose_position0
                 self.jiggle_settings = STATIC_JIGGLE_SETTINGS
-                headpos = bone.head
-                tailpos = bone.tail
+                headpos = self.bone.head
+                tailpos = self.bone.tail
                 diff = (headpos-tailpos)
                 if diff.length < MERGE_BONE_THRESHOLD:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
@@ -65,17 +58,35 @@ class VirtualParticle:
                 self.working_position = self.pose.copy()
                 self.parent_pose = diff+self.pose
             case 'forwardProject':
-                self.position = bone.jiggle.position2.copy()
-                self.position_last = bone.jiggle.position_last2
-                self.rest_pose_position = bone.jiggle.rest_pose_position2
-                headpos = bone.head
-                tailpos = bone.tail
+                self.position = self.bone.jiggle.position2.copy()
+                self.position_last = self.bone.jiggle.position_last2
+                self.rest_pose_position = self.bone.jiggle.rest_pose_position2
+                headpos = self.bone.head
+                tailpos = self.bone.tail
                 diff = tailpos - headpos
                 if diff.length < MERGE_BONE_THRESHOLD:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
                 self.pose = self.obj_world_matrix@(headpos+diff)
                 self.working_position = self.pose.copy()
-                self.jiggle_settings = JiggleSettings.from_bone(bone) if not static else STATIC_JIGGLE_SETTINGS
+                self.jiggle_settings = JiggleSettings.from_bone(self.bone) if not self.static else STATIC_JIGGLE_SETTINGS
+        if self.parent:
+            self.parent_pose = self.parent.pose
+        self.desired_length_to_parent = max((self.pose - self.parent_pose).length, MERGE_BONE_THRESHOLD)
+
+    def __init__(self, obj, bone, particleType, static=False):
+        self.obj = obj
+        self.obj_world_matrix = obj.matrix_world
+        self.bone = bone
+        self.particleType = particleType
+        self.static = static
+        self.parent = None
+        self.pose = ZERO_VEC
+        self.parent_pose = ZERO_VEC
+        self.rolling_error = IDENTITY_QUAT
+        self.desired_length_to_parent = 1
+        self.children = []
+        self.jiggle_settings = None
+        self.read()
 
     def set_parent(self, parent):
         self.parent = parent
@@ -254,57 +265,69 @@ class VirtualParticle:
         self.bone.matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
         self.rolling_error = self.parent.rolling_error.slerp(IDENTITY_QUAT, self.jiggle_settings.blend)@animPoseToPhysicsPose
 
-virtual_particles_cache = None
-def get_virtual_particles(scene):
-    global virtual_particles_cache
-    if virtual_particles_cache is not None:
-        return virtual_particles_cache
+def get_virtual_particles_obj(obj):
+    global jiggle_object_virtual_point_cache
+    if obj in jiggle_object_virtual_point_cache:
+        virtual_particles = jiggle_object_virtual_point_cache[obj]
+        return jiggle_object_virtual_point_cache[obj]
+
     virtual_particles_cache = []
+    bones = obj.pose.bones
+    def visit(bone, last_particle=None):
+        bone_jiggle = bone.jiggle
+        static = not bone_jiggle.enable
+        match bone.jiggle.mode:
+            case 'normal':
+                particle = VirtualParticle(obj, bone, 'normal', static)
+                particle.set_parent(last_particle)
+                virtual_particles_cache.append(particle)
+                last_particle = particle
+            case 'root':
+                back_particle = VirtualParticle(obj, bone, 'backProject', static)
+                virtual_particles_cache.append(back_particle)
+                particle = VirtualParticle(obj, bone, 'normal', static)
+                particle.set_parent(back_particle)
+                virtual_particles_cache.append(particle)
+                last_particle = particle
+            case 'tip':
+                particle = VirtualParticle(obj, bone, 'normal', static)
+                particle.set_parent(last_particle)
+                virtual_particles_cache.append(particle)
+                tip = VirtualParticle(obj, bone, 'forwardProject', static)
+                tip.set_parent(particle)
+                virtual_particles_cache.append(tip)
+                return
+            case 'solo':
+                back_particle = VirtualParticle(obj, bone, 'backProject', static)
+                virtual_particles_cache.append(back_particle)
+                particle = VirtualParticle(obj, bone, 'normal', static)
+                particle.set_parent(back_particle)
+                virtual_particles_cache.append(particle)
+                tip = VirtualParticle(obj, bone, 'forwardProject', static)
+                tip.set_parent(particle)
+                virtual_particles_cache.append(tip)
+                return
+        for child in bone.children:
+            if child.jiggle.mode == 'none':
+                continue
+            visit(child, last_particle)
+    for bone in bones:
+        if bone.jiggle.mode == 'root':
+            visit(bone)
+    jiggle_object_virtual_point_cache[obj] = virtual_particles_cache
+    return virtual_particles_cache
+
+def get_virtual_particles(scene):
+    global jiggle_scene_virtual_point_cache
+    if jiggle_scene_virtual_point_cache is not None:
+        return jiggle_scene_virtual_point_cache 
+    jiggle_scene_virtual_point_cache = []
     jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze]
     for obj in jiggle_objs:
-        bones = obj.pose.bones
-        def visit(bone, last_particle=None):
-            bone_jiggle = bone.jiggle
-            static = not bone_jiggle.enable
-            match bone.jiggle.mode:
-                case 'normal':
-                    particle = VirtualParticle(obj, bone, 'normal', static)
-                    particle.set_parent(last_particle)
-                    virtual_particles_cache.append(particle)
-                    last_particle = particle
-                case 'root':
-                    back_particle = VirtualParticle(obj, bone, 'backProject', static)
-                    virtual_particles_cache.append(back_particle)
-                    particle = VirtualParticle(obj, bone, 'normal', static)
-                    particle.set_parent(back_particle)
-                    virtual_particles_cache.append(particle)
-                    last_particle = particle
-                case 'tip':
-                    particle = VirtualParticle(obj, bone, 'normal', static)
-                    particle.set_parent(last_particle)
-                    virtual_particles_cache.append(particle)
-                    tip = VirtualParticle(obj, bone, 'forwardProject', static)
-                    tip.set_parent(particle)
-                    virtual_particles_cache.append(tip)
-                    return
-                case 'solo':
-                    back_particle = VirtualParticle(obj, bone, 'backProject', static)
-                    virtual_particles_cache.append(back_particle)
-                    particle = VirtualParticle(obj, bone, 'normal', static)
-                    particle.set_parent(back_particle)
-                    virtual_particles_cache.append(particle)
-                    tip = VirtualParticle(obj, bone, 'forwardProject', static)
-                    tip.set_parent(particle)
-                    virtual_particles_cache.append(tip)
-                    return
-            for child in bone.children:
-                if child.jiggle.mode == 'none':
-                    continue
-                visit(child, last_particle)
-        for bone in bones:
-            if bone.jiggle.mode == 'root':
-                visit(bone)
-    return virtual_particles_cache
+        jiggle_scene_virtual_point_cache.extend(get_virtual_particles_obj(obj))
+    for particle in jiggle_scene_virtual_point_cache:
+        particle.read()
+    return jiggle_scene_virtual_point_cache 
 
 def lerp(a, b, t):
     return a + (b - a) * t
@@ -320,16 +343,6 @@ def is_bone_animated(armature, bone_name):
 
 def flatten(mat):
     return [mat[j][i] for i in range(4) for j in range(4)]
-
-def reset_scene():
-    jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable]
-    for ob in jiggle_objs:
-        reset_ob(ob)
-                              
-def reset_ob(ob):
-    mark_jiggle_tree(ob)
-    for bone in ob.pose.bones:
-        reset_bone(bone)
 
 def reset_bone(b):
     head_pos = (b.id_data.matrix_world@b.head)
@@ -360,6 +373,7 @@ def update_pose_bone_jiggle_prop(self,context,prop):
 def mark_jiggle_tree(obj):
     if not obj or obj.type != 'ARMATURE':
         return
+    jiggle_object_virtual_point_cache.clear()
     def visit(bone, last_jiggle_parent=None, promotion_queue=[]):
         jiggle_enabled = getattr(bone.jiggle, 'enable', False)
         jiggle_count = 0
@@ -483,10 +497,10 @@ def draw_callback():
         
 @persistent                
 def jiggle_post(scene,depsgraph):
-    global jiggle_physics_resetting, virtual_particles_cache
+    global jiggle_physics_resetting, jiggle_scene_virtual_point_cache
     if jiggle_physics_resetting:
         return
-    virtual_particles_cache = None
+    jiggle_scene_virtual_point_cache = None
     if scene.jiggle.debug: _profiler.enable()
     jiggle = scene.jiggle
     objects = scene.objects
@@ -589,7 +603,10 @@ class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
 
 def jiggle_reset(context):
     jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute]
+    jiggle_scene_virtual_point_cache = None
+    jiggle_object_virtual_point_cache.clear()
     for ob in jiggle_objs:
+        mark_jiggle_tree(ob)
         for bone in ob.pose.bones:
             reset_bone(bone)
     context.scene.jiggle.lastframe = context.scene.frame_current
