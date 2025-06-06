@@ -49,12 +49,13 @@ class VirtualParticle:
                 self.position_last = bone.jiggle.position_last1
                 self.rest_pose_position = bone.jiggle.rest_pose_position1
                 self.pose = (self.obj_world_matrix@bone.head)
+                self.working_position = self.position.copy()
                 self.jiggle_settings = JiggleSettings.from_bone(bone) if not static else STATIC_JIGGLE_SETTINGS
             case 'backProject':
                 self.position = bone.jiggle.position0.copy()
                 self.position_last = bone.jiggle.position_last0
                 self.rest_pose_position = bone.jiggle.rest_pose_position0
-                self.jiggle_settings = JiggleSettings.from_bone(bone) if not static else STATIC_JIGGLE_SETTINGS
+                self.jiggle_settings = STATIC_JIGGLE_SETTINGS
                 headpos = bone.head
                 tailpos = bone.tail
                 diff = (headpos-tailpos)
@@ -73,6 +74,7 @@ class VirtualParticle:
                 if diff.length < MERGE_BONE_THRESHOLD:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
                 self.pose = self.obj_world_matrix@(headpos+diff)
+                self.working_position = self.pose.copy()
                 self.jiggle_settings = JiggleSettings.from_bone(bone) if not static else STATIC_JIGGLE_SETTINGS
 
     def set_parent(self, parent):
@@ -102,8 +104,6 @@ class VirtualParticle:
     def verlet_integrate(self, dt2, gravity):
         if not self.parent:
             return
-        if not self.parent.parent:
-            self.working_position = self.pose
         delta = self.position - self.position_last
         local_space_velocity = delta - (self.parent.position - self.parent.position_last)
         velocity = delta - local_space_velocity
@@ -171,9 +171,6 @@ class VirtualParticle:
 
     def constrain(self, depsgraph):
         if not self.parent:
-            return
-        if not self.parent.parent:
-            self.working_position = self.pose
             return
 
         # constrain angle
