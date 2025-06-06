@@ -14,6 +14,22 @@ area_pose_overlay = {}
 area_simulation_overlay = {}
 jiggle_physics_resetting = False
 
+class JiggleSettings:
+    def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
+        self.angle_elasticity = angle_elasticity
+        self.length_elasticity = length_elasticity
+        self.elasticity_soften = elasticity_soften
+        self.gravity = gravity
+        self.blend = blend
+        self.air_drag = air_drag
+        self.friction = friction
+        self.collision_radius = collision_radius
+    @classmethod
+    def from_bone(cls, bone):
+        return cls(bone.jiggle_angle_elasticity, bone.jiggle_length_elasticity, bone.jiggle_elasticity_soften, bone.jiggle_gravity, bone.jiggle_blend, bone.jiggle_air_drag, bone.jiggle_friction, bone.jiggle_collision_radius)
+
+STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,0.0,0.0,1.0,0.1)
+
 class VirtualParticle:
     def __init__(self, obj, bone, particleType):
         self.obj_world_matrix = obj.matrix_world
@@ -28,35 +44,59 @@ class VirtualParticle:
         self.desired_length_to_parent = 1
         self.children = []
         self.bone_length_change = 0
+        self.jiggle_settings = None
         match particleType:
             case 'backProject':
                 self.position = bone.jiggle.position0.copy()
                 self.position_last = bone.jiggle.position_last0.copy()
                 self.working_position = bone.jiggle.working_position0.copy()
                 self.rest_pose_position = bone.jiggle.rest_pose_position0.copy()
+                self.jiggle_settings = JiggleSettings.from_bone(bone)
             case 'normal':
                 self.position = bone.jiggle.position1.copy()
                 self.position_last = bone.jiggle.position_last1.copy()
                 self.working_position = bone.jiggle.working_position1.copy()
                 self.rest_pose_position = bone.jiggle.rest_pose_position1.copy()
                 self.pose = (self.obj_world_matrix@bone.head)
+                self.jiggle_settings = JiggleSettings.from_bone(bone)
             case 'forwardProject':
                 self.position = bone.jiggle.position2.copy()
                 self.position_last = bone.jiggle.position_last2.copy()
                 self.working_position = bone.jiggle.working_position2.copy()
                 self.rest_pose_position = bone.jiggle.rest_pose_position2.copy()
                 self.pose = (self.obj_world_matrix@bone.tail)
+                self.jiggle_settings = JiggleSettings.from_bone(bone)
+            case 'staticBackProject':
+                self.position = bone.jiggle.position0.copy()
+                self.position_last = bone.jiggle.position_last0.copy()
+                self.working_position = bone.jiggle.working_position0.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position0.copy()
+                self.jiggle_settings = STATIC_JIGGLE_SETTINGS
+            case 'static':
+                self.position = bone.jiggle.position1.copy()
+                self.position_last = bone.jiggle.position_last1.copy()
+                self.working_position = bone.jiggle.working_position1.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position1.copy()
+                self.pose = (self.obj_world_matrix@bone.head)
+                self.jiggle_settings = STATIC_JIGGLE_SETTINGS
+            case 'staticForwardProject':
+                self.position = bone.jiggle.position2.copy()
+                self.position_last = bone.jiggle.position_last2.copy()
+                self.working_position = bone.jiggle.working_position2.copy()
+                self.rest_pose_position = bone.jiggle.rest_pose_position2.copy()
+                self.pose = (self.obj_world_matrix@bone.tail)
+                self.jiggle_settings = STATIC_JIGGLE_SETTINGS
 
     def set_parent(self, parent):
-        if (self.pose - parent.pose).length < SAME_BONE_THRESHOLD:
-            raise ValueError(f"VirtualParticle cannot have a parent with the same pose as itself.{parent.bone.name} -> {self.bone.name}")
+        if self.jiggle_settings.blend > 0 and (self.pose - parent.pose).length < SAME_BONE_THRESHOLD:
+            raise ValueError(f"VirtualParticle cannot have a parent with the same pose as itself. {parent.bone.name} -> {self.bone.name} (particleType: {self.particleType})")
         self.parent = parent
         parent.set_child(self)
         self.parent_pose = parent.pose
         self.desired_length_to_parent = max((self.pose - self.parent_pose).length, SAME_BONE_THRESHOLD)
 
     def set_child(self, child):
-        if self.particleType == 'backProject':
+        if self.particleType == 'backProject' or self.particleType == 'staticBackProject':
             self.pose = (child.pose-(self.obj_world_matrix @ child.bone.tail))+child.pose
             self.working_position = self.pose
             self.parent_pose = (self.pose-child.pose) + self.pose
@@ -81,6 +121,21 @@ class VirtualParticle:
                 self.bone.jiggle.position_last2 = self.position_last
                 self.bone.jiggle.working_position2 = self.working_position
                 self.bone.jiggle.rest_pose_position2 = self.rest_pose_position
+            case 'staticBackProject':
+                self.bone.jiggle.position0 = self.position
+                self.bone.jiggle.position_last0 = self.position_last
+                self.bone.jiggle.working_position0 = self.working_position
+                self.bone.jiggle.rest_pose_position0 = self.rest_pose_position
+            case 'static':
+                self.bone.jiggle.position1 = self.position
+                self.bone.jiggle.position_last1 = self.position_last
+                self.bone.jiggle.working_position1 = self.working_position
+                self.bone.jiggle.rest_pose_position1 = self.rest_pose_position
+            case 'staticForwardProject':
+                self.bone.jiggle.position2 = self.position
+                self.bone.jiggle.position_last2 = self.position_last
+                self.bone.jiggle.working_position2 = self.working_position
+                self.bone.jiggle.rest_pose_position2 = self.rest_pose_position
 
     def verlet_integrate(self, dt2, gravity):
         if not self.parent:
@@ -88,7 +143,7 @@ class VirtualParticle:
         delta = self.position - self.position_last
         local_space_velocity = delta - (self.parent.position - self.parent.position_last)
         velocity = delta - local_space_velocity
-        self.working_position = self.position + velocity * (1.0-self.bone.jiggle_air_drag) + local_space_velocity * (1.0-self.bone.jiggle_friction) + gravity * self.bone.jiggle_gravity * dt2
+        self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
 
     def mesh_collide(self, collider, depsgraph):
         collider_matrix = collider.matrix_world
@@ -100,7 +155,7 @@ class VirtualParticle:
         normal = collider_matrix.to_quaternion() @ local_normal
         diff = self.working_position-location
 
-        local_radius = self.bone.jiggle_collision_radius
+        local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
@@ -111,7 +166,7 @@ class VirtualParticle:
     def empty_collide(self, collider):
         collider_matrix = collider.matrix_world
 
-        local_radius = self.bone.jiggle_collision_radius
+        local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
@@ -169,14 +224,14 @@ class VirtualParticle:
         error = (self.working_position - (self.parent.working_position + constraintTarget)).length
         error /= self.desired_length_to_parent
         error = min(error, 1.0)
-        error = pow(error, self.bone.jiggle_elasticity_soften*self.bone.jiggle_elasticity_soften)
-        self.working_position = self.working_position.lerp(self.parent.working_position + constraintTarget, self.bone.jiggle_angle_elasticity * self.bone.jiggle_angle_elasticity * error)
+        error = pow(error, self.parent.jiggle_settings.elasticity_soften*self.parent.jiggle_settings.elasticity_soften)
+        self.working_position = self.working_position.lerp(self.parent.working_position + constraintTarget, self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error)
 
         # collisions
         self.solve_collisions(depsgraph)
 
         # constrain length
-        length_elasticity = self.bone.jiggle_length_elasticity * self.bone.jiggle_length_elasticity
+        length_elasticity = self.parent.jiggle_settings.length_elasticity * self.parent.jiggle_settings.length_elasticity
         if self.bone.bone.use_connect:
             length_elasticity = 1
         diff = self.working_position - self.parent.working_position
@@ -188,7 +243,7 @@ class VirtualParticle:
         self.position = self.working_position
 
     def apply_pose(self):
-        if not self.child:
+        if not self.child or self.jiggle_settings.blend <= 0:
             self.rest_pose_position = self.pose
             return
 
@@ -220,12 +275,12 @@ class VirtualParticle:
                 simulatedVectorSum += (local_child_working_position - local_working_position).normalized()
             cachedAnimatedVector = cachedAnimatedVectorSum * (1.0/len(self.children))
             simulatedVector = simulatedVectorSum * (1.0/len(self.children))
-        animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.bone.jiggle_blend).normalized()
+        animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.jiggle_settings.blend).normalized()
 
         if self.parent.parent:
             loc, rot, scale = self.bone.matrix.decompose()
             if self.bone.bone.use_inherit_rotation:
-                prot = self.parent.rolling_error.inverted()
+                prot = self.parent.rolling_error.inverted().slerp(IDENTITY_QUAT, 1-self.jiggle_settings.blend)
             else:
                 prot = IDENTITY_QUAT
 
@@ -233,67 +288,66 @@ class VirtualParticle:
             adjusted_pose = (inverted_obj_matrix@self.parent.working_position) + (self.parent.rolling_error@parent_pose_aim)
             diff = (inverted_obj_matrix@self.working_position)-adjusted_pose
 
-            loc = loc + (prot@diff) * self.bone.jiggle_blend
+            loc = loc + (prot@diff) * self.jiggle_settings.blend
             new_matrix = Matrix.Translation(loc) @ prot.to_matrix().to_4x4() @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
             self.bone.matrix = new_matrix
-            self.rolling_error = animPoseToPhysicsPose
+            self.rolling_error = self.parent.rolling_error@animPoseToPhysicsPose
         else:
             diff = local_working_position-local_pose
-            diff = diff.lerp(ZERO_VEC, 1-self.bone.jiggle_blend)
             loc, rot, scale = self.bone.matrix.decompose()
-            new_matrix = Matrix.Translation(loc+diff) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
+            new_matrix = Matrix.Translation(loc+diff*self.jiggle_settings.blend) @ animPoseToPhysicsPose.to_matrix().to_4x4() @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(scale).to_4x4()
             self.bone.matrix = new_matrix 
-            self.rolling_error = animPoseToPhysicsPose
+            self.rolling_error = self.parent.rolling_error@animPoseToPhysicsPose
 
-def find_jiggle_parent(bone):
-    parent = bone.parent
-    while parent:
-        if hasattr(parent, "jiggle") and getattr(parent.jiggle, "enable", False):
-            return parent
-        parent = parent.parent
-    else:
-        return None
-
-def get_last_particle(obj, last_particle, virtual_particles, bone):
-    p = find_jiggle_parent(bone)
-    if last_particle is None or (p and p != last_particle.bone) or (last_particle.bone.head-bone.head).length < SAME_BONE_THRESHOLD:
-        if p:
-            # Enumerate backwards as the necessary particle is almost certainly near the end.
-            for particle in virtual_particles[::-1]:
-                if particle.bone == p:
-                    if particle.particleType == "normal":
-                        # If the bones have the same pose, they can't be used as a parent....
-                        if (particle.bone.head - bone.head).length > SAME_BONE_THRESHOLD:
-                            return particle
-                        else:
-                            break
-                    else:
-                        break
-        root_particle = VirtualParticle(obj, bone, 'backProject')
-        virtual_particles.append(root_particle)
-        return root_particle
-    return last_particle
+def flatten_tree_from_roots(roots):
+    result = []
+    def visit(node):
+        result.append(node)
+        for child in node.children:
+            visit(child)
+    for root in roots:
+        visit(root)
+    return result
 
 def get_virtual_particles(scene):
-    virtual_particles = []
+    root_particles = []
     jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze]
     for ob in jiggle_objs:
-        pose_bones = ob.pose.bones
-        bones = [bone for bone in pose_bones if getattr(bone.jiggle, 'enable', False)]
-        last_particle = None
-        for bone in bones:
-            last_particle = get_last_particle(ob, last_particle, virtual_particles, bone)
-            new_particle = VirtualParticle(ob, bone, 'normal')
-            new_particle.set_parent(last_particle)
-            virtual_particles.append(new_particle)
-            last_particle = new_particle
-            child = get_child(bone)
-            if not child:
-                child_particle = VirtualParticle(ob, bone, 'forwardProject')
-                child_particle.set_parent(last_particle)
-                virtual_particles.append(child_particle)
-                last_particle = None
-    return virtual_particles
+        bones = ob.pose.bones
+        child_bones = [b for b in bones if b.jiggle.enable and (len(b.children) == 0 or not any(c.jiggle.enable for c in b.children))]
+        real_to_virt_dict = {}
+        false_roots = []
+        for bone in child_bones[::-1]:
+            if real_to_virt_dict.get(bone.as_pointer()) is not None:
+                continue
+            child_particle = VirtualParticle(ob, bone, 'forwardProject')
+            particle = VirtualParticle(ob, bone, 'normal')
+            real_to_virt_dict[bone.as_pointer()] = particle
+            child_particle.set_parent(particle)
+            last_particle = particle
+            p = bone.parent
+            while p:
+                # Merge all same-bones into one particle.
+                if (last_particle.bone.head-p.head).length < SAME_BONE_THRESHOLD:
+                    p = p.parent
+                    continue
+                particle = real_to_virt_dict.get(p.as_pointer())
+                if particle is None:
+                    particle = VirtualParticle(ob, p, 'normal' if p.jiggle.enable else 'static')
+                    real_to_virt_dict[p.as_pointer()] = particle
+                    last_particle.set_parent(particle)
+                    last_particle = particle
+                else:
+                    last_particle.set_parent(particle)
+                    break
+                p = p.parent
+            if p is None:
+                false_roots.append(last_particle)
+        for false_root in false_roots:
+            real_root = VirtualParticle(ob, false_root.bone, 'backProject' if false_root.jiggle.enable else 'staticBackProject')
+            false_root.set_parent(real_root)
+            root_particles.append(real_root)
+    return flatten_tree_from_roots(root_particles)
 
 def lerp(a, b, t):
     return a + (b - a) * t
@@ -367,12 +421,6 @@ def get_jiggle_parent(b):
         return p
     return None
 
-def get_child(b):
-    for child in b.children:
-        if (child.jiggle.enable):
-            return child
-    return None
-
 def billboard_circle(verts, center, radius, segments=16):
     rv3d = bpy.context.region_data
     view_matrix = rv3d.view_matrix
@@ -408,7 +456,7 @@ def draw_callback():
             rest_pose_overlay_verts.append(particle.rest_pose_position)
             verts.append(particle.parent.working_position)
             verts.append(particle.working_position)
-            local_radius = particle.bone.jiggle_collision_radius
+            local_radius = particle.jiggle_settings.collision_radius
             bone_matrix_world = particle.bone.id_data.matrix_world @ particle.bone.matrix
             world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
             billboard_circle(verts, particle.working_position, world_radius)
