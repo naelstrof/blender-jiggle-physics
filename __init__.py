@@ -732,7 +732,7 @@ class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
     def execute(self,context):
         action = context.object.animation_data.action
         for bone in context.selected_pose_bones:
-            for prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
+            for prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
                 data_path = f'pose.bones["{bone.name}"].{prop}'
                 fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path == data_path]
                 for fc in fcurves_to_remove:
