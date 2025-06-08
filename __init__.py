@@ -382,7 +382,9 @@ def update_pose_bone_jiggle_prop(self,context,prop):
 def mark_jiggle_tree(obj):
     if not obj or obj.type != 'ARMATURE':
         return
-    jiggle_clear_cache()
+    global jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache
+    jiggle_scene_virtual_point_cache = None
+    jiggle_object_virtual_point_cache.clear()
     def visit(bone, last_jiggle_parent=None, promotion_queue=[]):
         jiggle_enabled = getattr(bone.jiggle, 'enable', False)
         jiggle_count = 0
@@ -506,8 +508,8 @@ def draw_callback():
         
 @persistent                
 def jiggle_post(scene,depsgraph):
-    global jiggle_physics_resetting
-    jiggle_clear_cache() # can't cache between frames or blender will crash due to PoseBones being destroyed :sob:
+    global jiggle_physics_resetting, jiggle_scene_virtual_point_cache
+    jiggle_scene_virtual_point_cache = None
     if jiggle_physics_resetting:
         return
     if scene.jiggle.debug: _profiler.enable()
@@ -611,13 +613,10 @@ class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
             other_bone.jiggle_friction = bone.jiggle_friction
         return {'FINISHED'}
 
-def jiggle_clear_cache():
+def jiggle_reset(context):
     global jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache
     jiggle_scene_virtual_point_cache = None
-    #jiggle_object_virtual_point_cache.clear()
-
-def jiggle_reset(context):
-    jiggle_clear_cache()
+    jiggle_object_virtual_point_cache.clear()
     jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute]
     for ob in jiggle_objs:
         mark_jiggle_tree(ob)
