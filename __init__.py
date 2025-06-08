@@ -16,6 +16,7 @@ area_simulation_overlay = {}
 jiggle_physics_resetting = False
 jiggle_object_virtual_point_cache = {}
 jiggle_scene_virtual_point_cache = None
+jiggle_baking = False
 
 class JiggleSettings:
     def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
@@ -36,6 +37,13 @@ STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,0.0,0.0,1.0,0.1)
 class VirtualParticle:
     def read(self):
         self.obj_world_matrix = self.obj.matrix_world
+        try:
+            # Pose bones are ephemeral, so we need to get a new reference to the bone
+            self.bone = self.obj.pose.bones[self.bone_name]
+        except:
+            jiggle_object_virtual_point_cache.clear()
+            raise
+
         match self.particleType:
             case 'normal':
                 self.position = self.bone.jiggle.position1.copy()
@@ -77,6 +85,7 @@ class VirtualParticle:
         self.obj = obj
         self.obj_world_matrix = obj.matrix_world
         self.bone = bone
+        self.bone_name = bone.name
         self.particleType = particleType
         self.static = static
         self.parent = None
@@ -320,11 +329,11 @@ def get_virtual_particles_obj(obj):
     return virtual_particles_cache
 
 def get_virtual_particles(scene):
-    global jiggle_scene_virtual_point_cache
+    global jiggle_scene_virtual_point_cache, jiggle_baking
     if jiggle_scene_virtual_point_cache is not None:
         return jiggle_scene_virtual_point_cache 
     jiggle_scene_virtual_point_cache = []
-    jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and not obj.jiggle.freeze]
+    jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and (not obj.jiggle.freeze or jiggle_baking)]
     for obj in jiggle_objs:
         jiggle_scene_virtual_point_cache.extend(get_virtual_particles_obj(obj))
     return jiggle_scene_virtual_point_cache 
@@ -605,7 +614,7 @@ class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
 def jiggle_clear_cache():
     global jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache
     jiggle_scene_virtual_point_cache = None
-    jiggle_object_virtual_point_cache.clear()
+    #jiggle_object_virtual_point_cache.clear()
 
 def jiggle_reset(context):
     jiggle_clear_cache()
@@ -781,56 +790,61 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
     
     @classmethod
     def poll(cls,context):
-        return context.object and context.mode == 'POSE'
+        return context.object and context.mode == 'POSE' and context.object.type == 'ARMATURE' and context.object.jiggle.enable and not context.object.jiggle.mute
     
     def execute(self,context):
-        def push_nla():
-            if context.scene.jiggle.bake_overwrite: return
-            if not context.scene.jiggle.bake_nla: return
-            if not context.object.animation_data: return
-            if not context.object.animation_data.action: return
-            action = context.object.animation_data.action
-            track = context.object.animation_data.nla_tracks.new()
-            track.name = action.name
-            track.strips.new(action.name, int(action.frame_range[0]), action)
+        global jiggle_baking
+        jiggle_baking = True
+        try:
+            def push_nla():
+                if context.scene.jiggle.bake_overwrite: return
+                if not context.scene.jiggle.bake_nla: return
+                if not context.object.animation_data: return
+                if not context.object.animation_data.action: return
+                action = context.object.animation_data.action
+                track = context.object.animation_data.nla_tracks.new()
+                track.name = action.name
+                track.strips.new(action.name, int(action.frame_range[0]), action)
+                
+            push_nla()
             
-        push_nla()
-        
-        #preroll
-        duration = context.scene.frame_end - context.scene.frame_start
-        preroll = context.scene.jiggle.preroll
-        context.scene.jiggle.is_preroll = False
-        bpy.ops.pose.select_all(action='DESELECT')
-        jiggle_select(context)
-        jiggle_reset(context)
-        while preroll >= 0:
-            if context.scene.jiggle.loop:
-                frame = context.scene.frame_end - (preroll%duration)
-                context.scene.frame_set(frame)
+            #preroll
+            duration = context.scene.frame_end - context.scene.frame_start
+            preroll = context.scene.jiggle.preroll
+            context.scene.jiggle.is_preroll = False
+            bpy.ops.pose.select_all(action='DESELECT')
+            jiggle_select(context)
+            jiggle_reset(context)
+            while preroll >= 0:
+                if context.scene.jiggle.loop:
+                    frame = context.scene.frame_end - (preroll%duration)
+                    context.scene.frame_set(frame)
+                else:
+                    context.scene.frame_set(context.scene.frame_start-preroll)
+                context.scene.jiggle.is_preroll = True
+                preroll -= 1
+            #bake
+            if bpy.app.version[0] >= 4 and bpy.app.version[1] > 0:
+                bpy.ops.nla.bake(frame_start = context.scene.frame_start,
+                                frame_end = context.scene.frame_end,
+                                only_selected = True,
+                                visual_keying = True,
+                                use_current_action = context.scene.jiggle.bake_overwrite,
+                                bake_types={'POSE'},
+                                channel_types={'LOCATION','ROTATION','SCALE'})
             else:
-                context.scene.frame_set(context.scene.frame_start-preroll)
-            context.scene.jiggle.is_preroll = True
-            preroll -= 1
-        #bake
-        if bpy.app.version[0] >= 4 and bpy.app.version[1] > 0:
-            bpy.ops.nla.bake(frame_start = context.scene.frame_start,
-                            frame_end = context.scene.frame_end,
-                            only_selected = True,
-                            visual_keying = True,
-                            use_current_action = context.scene.jiggle.bake_overwrite,
-                            bake_types={'POSE'},
-                            channel_types={'LOCATION','ROTATION','SCALE'})
-        else:
-            bpy.ops.nla.bake(frame_start = context.scene.frame_start,
-                            frame_end = context.scene.frame_end,
-                            only_selected = True,
-                            visual_keying = True,
-                            use_current_action = context.scene.jiggle.bake_overwrite,
-                            bake_types={'POSE'})
-        context.scene.jiggle.is_preroll = False
-        context.object.jiggle.freeze = True
-        if not context.scene.jiggle.bake_overwrite:
-            context.object.animation_data.action.name = 'JiggleAction'
+                bpy.ops.nla.bake(frame_start = context.scene.frame_start,
+                                frame_end = context.scene.frame_end,
+                                only_selected = True,
+                                visual_keying = True,
+                                use_current_action = context.scene.jiggle.bake_overwrite,
+                                bake_types={'POSE'})
+            context.scene.jiggle.is_preroll = False
+            context.object.jiggle.freeze = True
+            if not context.scene.jiggle.bake_overwrite:
+                context.object.animation_data.action.name = 'JiggleAction'
+        finally:
+            jiggle_baking = False
         return {'FINISHED'}  
 
 class JigglePanel:
