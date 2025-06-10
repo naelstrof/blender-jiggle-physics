@@ -10,13 +10,13 @@ IDENTITY_QUAT = Quaternion()
 MERGE_BONE_THRESHOLD = 0.01
 
 _profiler = cProfile.Profile()
-jiggle_overlay_handler = None
 area_pose_overlay = {}
 area_simulation_overlay = {}
 jiggle_physics_resetting = False
 jiggle_object_virtual_point_cache = {}
 jiggle_scene_virtual_point_cache = None
 jiggle_baking = False
+jiggle_overlay_handler = None
 
 class JiggleSettings:
     def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
@@ -654,7 +654,7 @@ class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
             area_pose_overlay[context.area.as_pointer()] = False
 
         global jiggle_overlay_handler
-        if jiggle_overlay_handler:
+        if jiggle_overlay_handler is not None:
             bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
 
         # FIXME: This doesn't handle areas being destroyed
@@ -687,7 +687,7 @@ class VIEW3D_OT_JiggleToggleSimulationOverlay(bpy.types.Operator):
             area_simulation_overlay[context.area.as_pointer()] = False
 
         global jiggle_overlay_handler
-        if jiggle_overlay_handler:
+        if jiggle_overlay_handler is not None:
             bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
 
         jiggle_overlay_handler = None
@@ -1375,9 +1375,17 @@ def unregister():
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
     bpy.app.handlers.load_post.remove(jiggle_load)
 
-    global jiggle_overlay_handler
-    if jiggle_overlay_handler:
+    global jiggle_overlay_handler, area_pose_overlay, area_simulation_overlay, jiggle_physics_resetting, jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache, jiggle_baking
+    if jiggle_overlay_handler is not None:
         bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
+
+    area_pose_overlay = {}
+    area_simulation_overlay = {}
+    jiggle_physics_resetting = False
+    jiggle_object_virtual_point_cache = {}
+    jiggle_scene_virtual_point_cache = None
+    jiggle_baking = False
+    jiggle_overlay_handler = None
     
 if __name__ == "__main__":
     register()
