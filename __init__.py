@@ -9,14 +9,57 @@ IDENTITY_QUAT = Quaternion()
 # We merge bones that are closer than this as bones perfectly on top of each other don't work well with jiggle physics.
 MERGE_BONE_THRESHOLD = 0.01
 
-_profiler = cProfile.Profile()
-area_pose_overlay = {}
-area_simulation_overlay = {}
-jiggle_physics_resetting = False
-jiggle_object_virtual_point_cache = {}
-jiggle_scene_virtual_point_cache = None
-jiggle_baking = False
-jiggle_overlay_handler = None
+class AreaProperties:
+    def __init__(self):
+        self.overlay_pose = False
+        self.overlay_simulation = False
+
+class JiggleGlobals:
+    def __init__(self):
+        self.is_rendering = False
+        self.is_preroll = False
+        self.profiler = cProfile.Profile()
+        self.area_overlays = {}
+        self.physics_resetting = False
+        self.jiggle_object_virtual_point_cache = {}
+        self.jiggle_scene_virtual_point_cache = []
+        self.jiggle_baking = False
+        self.overlay_handler = None
+        self.propagating_props = False
+    def get_area_overlay_properties(self, area):
+        area_pointer = area.as_pointer()
+        if area_pointer not in self.area_overlays:
+            self.area_overlays[area_pointer] = AreaProperties()
+        return self.area_overlays[area_pointer]
+    def update_overlay_draw_handler(self):
+        if self.overlay_handler is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
+
+        self.overlay_handler = None
+        # FIXME: This doesn't handle areas being destroyed
+        for area_pointer, area_props in self.area_overlays.items():
+            if area_props.overlay_simulation or area_props.overlay_pose:
+                self.overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
+                break
+    def clear_per_object_caches(self):
+        self.jiggle_object_virtual_point_cache.clear()
+        self.jiggle_scene_virtual_point_cache.clear()
+    def clear_per_frame_caches(self):
+        self.jiggle_scene_virtual_point_cache.clear()
+    def on_unregister(self):
+        self.is_rendering = False
+        self.is_preroll = False
+        self.profiler = None
+        self.area_overlays.clear()
+        self.physics_resetting = False
+        self.jiggle_object_virtual_point_cache.clear()
+        self.jiggle_scene_virtual_point_cache.clear()
+        self.propagating_props = False
+        if self.overlay_handler is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
+
+
+_jiggle_globals = JiggleGlobals()
 
 class JiggleSettings:
     def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
@@ -80,6 +123,7 @@ class VirtualParticle:
         if self.parent:
             self.parent_pose = self.parent.pose
         self.desired_length_to_parent = max((self.pose - self.parent_pose).length, MERGE_BONE_THRESHOLD)
+        self.needs_collision = self.get_needs_collision()
 
     def __init__(self, obj, bone, particleType, static=False):
         self.obj = obj
@@ -95,6 +139,7 @@ class VirtualParticle:
         self.desired_length_to_parent = 1
         self.children = []
         self.jiggle_settings = None
+        self.needs_collision = False
         self.read()
 
     def set_parent(self, parent):
@@ -129,65 +174,70 @@ class VirtualParticle:
         velocity = delta - local_space_velocity
         self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
 
-    def mesh_collide(self, collider, depsgraph):
+    def mesh_collide(self, collider, depsgraph, position):
         collider_matrix = collider.matrix_world
-        local_working_position = collider_matrix.inverted() @ self.working_position
+        local_working_position = collider_matrix.inverted() @ position
         result, local_location, local_normal, _ = collider.closest_point_on_mesh(local_working_position, depsgraph=depsgraph)
         if not result:
-            return
+            return position
         location = collider_matrix @ local_location
         normal = collider_matrix.to_quaternion() @ local_normal
-        diff = self.working_position-location
+        diff = position-location
 
         local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
         if (diff).length > world_radius:
-            return
-        self.working_position = location + diff.normalized() * world_radius
+            return position
+        return location + diff.normalized() * world_radius
 
-    def empty_collide(self, collider):
+    def empty_collide(self, collider, position):
         collider_matrix = collider.matrix_world
 
         local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
-        world_vec = (self.working_position-collider_matrix.translation).normalized()*world_radius;
+        world_vec = (position-collider_matrix.translation).normalized()*world_radius;
         local_vec = collider_matrix.inverted().to_3x3() @ world_vec
 
-        local_working_position = collider_matrix.inverted() @ self.working_position
+        local_working_position = collider_matrix.inverted() @ position
         local_radius = local_vec.length
 
         diff = local_working_position
         empty_radius = 1.0
         if diff.length-local_radius > empty_radius:
-            return
+            return position
         local_working_position = diff.normalized() * (empty_radius+local_radius)
-        self.working_position = collider_matrix @ local_working_position
+        return collider_matrix @ local_working_position
 
-    def solve_collisions(self, depsgraph):
+    def get_needs_collision(self):
         if not self.bone.jiggle.collider_type:
-            return
+            return False
+        if self.bone.jiggle.collider_type == 'Object':
+            if not self.bone.jiggle.collider:
+                return False
+        else:
+            if not self.bone.jiggle.collider_collection:
+                return False
+        return True
 
+    def solve_collisions(self, depsgraph, position):
         if self.bone.jiggle.collider_type == 'Object':
             collider = self.bone.jiggle.collider
-            if not collider:
-                return
             if collider.type == 'MESH':
-                self.mesh_collide(collider, depsgraph)
+                return self.mesh_collide(collider, depsgraph, position)
             if collider.type == 'EMPTY':
-                self.empty_collide(collider)
+                return self.empty_collide(collider, position)
         else:
             collider_collection = self.bone.jiggle.collider_collection
-            if not collider_collection:
-                return
             for collider in collider_collection.objects:
                 if collider.type == 'MESH':
-                    self.mesh_collide(collider, depsgraph)
+                    position = self.mesh_collide(collider, depsgraph, position)
                 if collider.type == 'EMPTY':
-                    self.empty_collide(collider)
+                    position = self.empty_collide(collider, position)
+        return position
 
     def constrain(self, depsgraph):
         if not self.parent:
@@ -211,13 +261,14 @@ class VirtualParticle:
         error = pow(error, self.parent.jiggle_settings.elasticity_soften*self.parent.jiggle_settings.elasticity_soften)
         self.working_position = self.working_position.lerp(self.parent.working_position + constraintTarget, self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error)
 
-        # collisions
-        self.solve_collisions(depsgraph)
+        if self.needs_collision:
+            self.working_position = self.solve_collisions(depsgraph, self.working_position)
 
-        # constrain length
         length_elasticity = self.parent.jiggle_settings.length_elasticity * self.parent.jiggle_settings.length_elasticity
         if self.bone.bone.use_connect:
             length_elasticity = 1
+
+        # constrain length
         diff = self.working_position - self.parent.working_position
         dir = diff.normalized()
         self.working_position = self.working_position.lerp(self.parent.working_position + dir * self.desired_length_to_parent, length_elasticity)
@@ -275,7 +326,9 @@ class VirtualParticle:
         self.rolling_error = self.parent.rolling_error.slerp(IDENTITY_QUAT, self.jiggle_settings.blend)@animPoseToPhysicsPose
 
 def get_virtual_particles_obj(obj):
-    global jiggle_object_virtual_point_cache
+    global _jiggle_globals
+    jiggle_object_virtual_point_cache = _jiggle_globals.jiggle_object_virtual_point_cache
+
     if obj in jiggle_object_virtual_point_cache:
         virtual_particles = jiggle_object_virtual_point_cache[obj]
         for particle in virtual_particles:
@@ -329,10 +382,13 @@ def get_virtual_particles_obj(obj):
     return virtual_particles_cache
 
 def get_virtual_particles(scene):
-    global jiggle_scene_virtual_point_cache, jiggle_baking
-    if jiggle_scene_virtual_point_cache is not None:
+    global _jiggle_globals
+    jiggle_baking = _jiggle_globals.jiggle_baking
+    jiggle_scene_virtual_point_cache = _jiggle_globals.jiggle_scene_virtual_point_cache
+
+    if len(jiggle_scene_virtual_point_cache) > 0:
         return jiggle_scene_virtual_point_cache 
-    jiggle_scene_virtual_point_cache = []
+    jiggle_scene_virtual_point_cache.clear()
     jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and (not obj.jiggle.freeze or jiggle_baking)]
     for obj in jiggle_objs:
         jiggle_scene_virtual_point_cache.extend(get_virtual_particles_obj(obj))
@@ -361,30 +417,33 @@ def reset_bone(b):
     b.jiggle.rest_pose_position1 = b.jiggle.position1 = b.jiggle.position_last1 = head_pos
     b.jiggle.rest_pose_position2 = b.jiggle.position2 = b.jiggle.position_last2 = tail_pos
 
-# TODO: This is kinda nasty, bones recursively propagate-- to prevent infinite recursion we use a simple global flag.
-jiggle_propagating = False
 def update_pose_bone_jiggle_prop(self,context,prop): 
-    global jiggle_propagating
-    if jiggle_propagating:
+    global _jiggle_globals
+    if _jiggle_globals.propagating_props:
         return
-    jiggle_propagating = True
-    auto_key = bpy.context.scene.tool_settings.use_keyframe_insert_auto
-    for b in context.selected_pose_bones:
-        if b == self:
-            continue
-        if getattr(b,prop) == getattr(self,prop):
-            continue
-        setattr(b, prop, getattr(self,prop))
+    def keyframe(auto_key, b, prop):
         if auto_key and prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
             b.keyframe_insert(data_path=prop, index=-1)
-    jiggle_propagating = False
+    _jiggle_globals.propagating_props = True
+    try:
+        auto_key = bpy.context.scene.tool_settings.use_keyframe_insert_auto
+        for b in context.selected_pose_bones:
+            if b == self:
+                keyframe(auto_key, b, prop)
+                continue
+            if getattr(b,prop) == getattr(self,prop):
+                keyframe(auto_key, b, prop)
+                continue
+            setattr(b, prop, getattr(self,prop))
+            keyframe(auto_key, b, prop)
+    finally:
+        _jiggle_globals.propagating_props = False
 
 def mark_jiggle_tree(obj):
     if not obj or obj.type != 'ARMATURE':
         return
-    global jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache
-    jiggle_scene_virtual_point_cache = None
-    jiggle_object_virtual_point_cache.clear()
+    global _jiggle_globals
+    _jiggle_globals.clear_per_object_caches()
     def visit(bone, last_jiggle_parent=None, promotion_queue=[]):
         jiggle_enabled = getattr(bone.jiggle, 'enable', False)
         jiggle_count = 0
@@ -428,20 +487,22 @@ def mark_jiggle_tree(obj):
         visit(bone, None, [])
 
 def update_nested_jiggle_prop(self,context,prop): 
-    global jiggle_propagating
-    if jiggle_propagating:
+    global _jiggle_globals
+    if _jiggle_globals.propagating_props:
         return
-    jiggle_propagating = True
-    for b in context.selected_pose_bones:
-        if getattr(b.jiggle,prop) == getattr(self,prop):
-            continue
-        setattr(b.jiggle, prop, getattr(self,prop))
+    _jiggle_globals.propagating_props = True
+    try:
+        for b in context.selected_pose_bones:
+            if getattr(b.jiggle,prop) == getattr(self,prop):
+                continue
+            setattr(b.jiggle, prop, getattr(self,prop))
+            if prop == 'enable':
+                reset_bone(b)
         if prop == 'enable':
-            reset_bone(b)
-    if prop == 'enable':
-        self.id_data.jiggle.enable = True
-        mark_jiggle_tree(self.id_data)
-    jiggle_propagating = False
+            self.id_data.jiggle.enable = True
+            mark_jiggle_tree(self.id_data)
+    finally:
+        _jiggle_globals.propagating_props = False
 
 def get_jiggle_parent(b):
     p = b.parent
@@ -465,18 +526,22 @@ def billboard_circle(verts, center, radius, segments=8):
 
 @persistent
 def draw_callback():
-    if bpy.context.scene.jiggle.debug: _profiler.enable()
-    if not bpy.context.scene.jiggle.enable:
-        if bpy.context.scene.jiggle.debug: _profiler.disable()
+    global _jiggle_globals
+    jiggle = bpy.context.scene.jiggle
+    if jiggle.debug: _jiggle_globals.profiler.enable()
+    if not jiggle.enable:
+        if jiggle.debug: _jiggle_globals.profiler.disable()
         return
     if not bpy.context.area or not any(space.type == 'VIEW_3D' and space.overlay.show_overlays for space in bpy.context.area.spaces):
-        if bpy.context.scene.jiggle.debug: _profiler.disable()
+        if jiggle.debug: _jiggle_globals.profiler.disable()
         return
-    do_pose = area_pose_overlay.get(bpy.context.area.as_pointer(), False)
-    do_simulation = area_simulation_overlay.get(bpy.context.area.as_pointer(), False)
+
+    area_properties = _jiggle_globals.get_area_overlay_properties(bpy.context.area)
+    do_pose = area_properties.overlay_pose
+    do_simulation = area_properties.overlay_simulation
 
     if not do_pose and not do_simulation:
-        if bpy.context.scene.jiggle.debug: _profiler.disable()
+        if jiggle.debug: _jiggle_globals.profiler.disable()
         return
 
     virtual_particles = get_virtual_particles(bpy.context.scene)
@@ -504,37 +569,43 @@ def draw_callback():
         batch2 = batch_for_shader(shader, 'LINES', {"pos": verts})
         shader.uniform_float("color", (0.29411764705882354, 0, 0.5725490196078431, 1))
         batch2.draw(shader)
-    if bpy.context.scene.jiggle.debug: _profiler.disable()
+    if jiggle.debug: _jiggle_globals.profiler.disable()
         
 @persistent                
 def jiggle_post(scene,depsgraph):
-    global jiggle_physics_resetting, jiggle_scene_virtual_point_cache
-    jiggle_scene_virtual_point_cache = None
-    if jiggle_physics_resetting:
+    global _jiggle_globals
+    _jiggle_globals.clear_per_frame_caches()
+    physics_resetting = _jiggle_globals.physics_resetting
+    jiggle_scene_virtual_point_cache = _jiggle_globals.jiggle_scene_virtual_point_cache
+    profiler = _jiggle_globals.profiler
+    is_rendering = _jiggle_globals.is_rendering
+
+    if physics_resetting:
         return
-    if scene.jiggle.debug: _profiler.enable()
+    if scene.jiggle.debug: profiler.enable()
     jiggle = scene.jiggle
     objects = scene.objects
 
-    if not scene.jiggle.enable or jiggle.is_rendering:
-        if scene.jiggle.debug: _profiler.disable()
-        return
-
-    if (jiggle.lastframe == scene.frame_current):
-        virtual_particles = get_virtual_particles(scene)
-        for particle in virtual_particles:
-            particle.apply_pose()
-        if scene.jiggle.debug: _profiler.disable()
+    if not scene.jiggle.enable or is_rendering:
+        if scene.jiggle.debug: profiler.disable()
         return
 
     lastframe = jiggle.lastframe
+
+    if (lastframe == scene.frame_current):
+        virtual_particles = get_virtual_particles(scene)
+        for particle in virtual_particles:
+            particle.apply_pose()
+        if scene.jiggle.debug: profiler.disable()
+        return
+
     frame_start, frame_end, frame_current = scene.frame_start, scene.frame_end, scene.frame_current
-    frame_is_preroll = jiggle.is_preroll
+    frame_is_preroll = _jiggle_globals.is_preroll
     frame_loop = jiggle.loop
 
     if (frame_current == frame_start) and not frame_loop and not frame_is_preroll:
         jiggle_reset(bpy.context)
-        if scene.jiggle.debug: _profiler.disable()
+        if scene.jiggle.debug: profiler.disable()
         return
 
     if frame_current >= lastframe:
@@ -564,27 +635,25 @@ def jiggle_post(scene,depsgraph):
         particle.apply_pose()
         particle.write()
 
-    if scene.jiggle.debug: _profiler.disable()
+    if scene.jiggle.debug: profiler.disable()
 
 def collider_poll(self, object):
     return object.type == 'MESH' or object.type == 'EMPTY'
 
 @persistent        
 def jiggle_render_pre(scene):
-    scene.jiggle.is_rendering = True
+    global _jiggle_globals
+    _jiggle_globals.is_rendering = True
     
 @persistent
 def jiggle_render_post(scene):
-    scene.jiggle.is_rendering = False
+    global _jiggle_globals
+    _jiggle_globals.is_rendering = False
     
 @persistent
 def jiggle_render_cancel(scene):
-    scene.jiggle.is_rendering = False
-    
-@persistent
-def jiggle_load(scene):
-    s = bpy.context.scene
-    s.jiggle.is_rendering = False
+    global _jiggle_globals
+    _jiggle_globals.is_rendering = False
             
 class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
     """Copy active jiggle settings to selected bones"""
@@ -647,26 +716,10 @@ class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
         return context.area.type == 'VIEW_3D' and len(context.area.spaces)>0
     
     def execute(self,context):
-        current = area_pose_overlay.get(context.area.as_pointer(), False)
-        if not current:
-            area_pose_overlay[context.area.as_pointer()] = True
-        else:
-            area_pose_overlay[context.area.as_pointer()] = False
-
-        global jiggle_overlay_handler
-        if jiggle_overlay_handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
-
-        # FIXME: This doesn't handle areas being destroyed
-        for area in area_pose_overlay:
-            if area:
-                jiggle_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-                break
-        if jiggle_overlay_handler is None:
-            for area in area_simulation_overlay:
-                if area:
-                    jiggle_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-                    break
+        global _jiggle_globals
+        current = _jiggle_globals.get_area_overlay_properties(context.area)
+        current.overlay_pose = not current.overlay_pose
+        _jiggle_globals.update_overlay_draw_handler()
         context.area.tag_redraw()
         return {'FINISHED'}
 
@@ -680,28 +733,10 @@ class VIEW3D_OT_JiggleToggleSimulationOverlay(bpy.types.Operator):
         return context.area.type == 'VIEW_3D' and len(context.area.spaces)>0
     
     def execute(self,context):
-        current = area_simulation_overlay.get(context.area.as_pointer(), False)
-        if not current:
-            area_simulation_overlay[context.area.as_pointer()] = True
-        else:
-            area_simulation_overlay[context.area.as_pointer()] = False
-
-        global jiggle_overlay_handler
-        if jiggle_overlay_handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
-
-        jiggle_overlay_handler = None
-        # FIXME: This doesn't handle areas being destroyed
-        for area in area_pose_overlay:
-            if area:
-                jiggle_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-                break
-        if jiggle_overlay_handler is None:
-            for area in area_simulation_overlay:
-                if area:
-                    jiggle_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
-                    break
-
+        global _jiggle_globals
+        current = _jiggle_globals.get_area_overlay_properties(context.area)
+        current.overlay_simulation = not current.overlay_simulation
+        _jiggle_globals.update_overlay_draw_handler()
         context.area.tag_redraw()
         return {'FINISHED'}
 
@@ -716,14 +751,14 @@ class SCENE_OT_JiggleReset(bpy.types.Operator):
     
     def execute(self,context):
         frame = context.scene.frame_current
-        global jiggle_physics_resetting
-        jiggle_physics_resetting = True
+        global _jiggle_globals
+        _jiggle_globals.physics_resetting = True
         try:
             context.scene.frame_set(frame-1)
             jiggle_reset(context)
             context.scene.frame_set(frame)
         finally:
-            jiggle_physics_resetting = False
+            _jiggle_globals.physics_resetting = False
         return {'FINISHED'}
 
 class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
@@ -756,8 +791,9 @@ class SCENE_OT_JiggleProfile(bpy.types.Operator):
         return context.scene.jiggle.enable and context.scene.jiggle.debug
     
     def execute(self,context):
-        pstats.Stats(_profiler).sort_stats('cumulative').print_stats(20)
-        _profiler.clear()
+        global _jiggle_globals
+        pstats.Stats(_jiggle_globals.profiler).sort_stats('cumulative').print_stats(20)
+        _jiggle_globals.profiler.clear()
         return {'FINISHED'}
 
 def jiggle_select(context):
@@ -792,8 +828,8 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
         return context.object and context.mode == 'POSE' and context.object.type == 'ARMATURE' and context.object.jiggle.enable and not context.object.jiggle.mute
     
     def execute(self,context):
-        global jiggle_baking
-        jiggle_baking = True
+        global _jiggle_globals
+        _jiggle_globals.jiggle_baking = True
         try:
             def push_nla():
                 if context.scene.jiggle.bake_overwrite: return
@@ -810,7 +846,7 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
             #preroll
             duration = context.scene.frame_end - context.scene.frame_start
             preroll = context.scene.jiggle.preroll
-            context.scene.jiggle.is_preroll = False
+            _jiggle_globals.is_preroll = False
             bpy.ops.pose.select_all(action='DESELECT')
             jiggle_select(context)
             jiggle_reset(context)
@@ -820,7 +856,7 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
                     context.scene.frame_set(frame)
                 else:
                     context.scene.frame_set(context.scene.frame_start-preroll)
-                context.scene.jiggle.is_preroll = True
+                _jiggle_globals.is_preroll = True
                 preroll -= 1
             #bake
             if bpy.app.version[0] >= 4 and bpy.app.version[1] > 0:
@@ -838,12 +874,12 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
                                 visual_keying = True,
                                 use_current_action = context.scene.jiggle.bake_overwrite,
                                 bake_types={'POSE'})
-            context.scene.jiggle.is_preroll = False
+            _jiggle_globals.is_preroll = False
             context.object.jiggle.freeze = True
             if not context.scene.jiggle.bake_overwrite:
                 context.object.animation_data.action.name = 'JiggleAction'
         finally:
-            jiggle_baking = False
+            _jiggle_globals.jiggle_baking = False
         return {'FINISHED'}  
 
 class JigglePanel:
@@ -856,13 +892,13 @@ class JigglePanel:
         return context.object
 
 def draw_jiggle_overlay_menu(self, context):
+    global _jiggle_globals
+    area_properties = _jiggle_globals.get_area_overlay_properties(context.area)
     self.layout.label(text="Jiggle Physics")
     row = self.layout.row(align=True)
-    area = area_pose_overlay.get(context.area.as_pointer(), False)
-    icon = 'CHECKBOX_HLT' if area else 'CHECKBOX_DEHLT'
+    icon = 'CHECKBOX_HLT' if area_properties.overlay_pose else 'CHECKBOX_DEHLT'
     row.operator(VIEW3D_OT_JiggleTogglePoseOverlay.bl_idname, text="Show Rest Pose", icon=icon, emboss=False)
-    area = area_simulation_overlay.get(context.area.as_pointer(), False)
-    icon = 'CHECKBOX_HLT' if area else 'CHECKBOX_DEHLT'
+    icon = 'CHECKBOX_HLT' if area_properties.overlay_simulation else 'CHECKBOX_DEHLT'
     row.operator(VIEW3D_OT_JiggleToggleSimulationOverlay.bl_idname, text="Show Simulation", icon=icon, emboss=False)
 
 class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
@@ -1131,11 +1167,12 @@ class JIGGLE_PT_Bake(JigglePanel,bpy.types.Panel):
         layout = self.layout
         layout.use_property_split=True
         layout.use_property_decorate=False
-        layout.prop(context.scene.jiggle, 'preroll')
-        layout.prop(context.scene.jiggle, 'bake_overwrite')
+        jiggle = context.scene.jiggle
+        layout.prop(jiggle, 'preroll')
+        layout.prop(jiggle, 'bake_overwrite')
         row = layout.row()
-        row.enabled = not context.scene.jiggle.bake_overwrite
-        row.prop(context.scene.jiggle, 'bake_nla')
+        row.enabled = not jiggle.bake_overwrite
+        row.prop(jiggle, 'bake_nla')
         layout.operator('armature.jiggle_bake')
 
 class JiggleBone(bpy.types.PropertyGroup):
@@ -1163,7 +1200,7 @@ class JiggleBone(bpy.types.PropertyGroup):
         items=[('none','None','Not jiggled, and contains no jiggle bone children'),
                ('root','Root','A root jiggle bone'),
                ('solo','Solo','A bone without jiggled children or parents'),
-               ('merge','Merge','Ignore this bone, but within it is a jiggle bone'),
+               ('merge','Merge','Ignore this bone, but within its children is a jiggle bone'),
                ('normal','Normal','User-driven jiggle'),
                ('tip', 'Tip', 'A tip jiggle bone, needing a forward projected particle, contains no jiggle bone children')],
         override={'LIBRARY_OVERRIDABLE'},
@@ -1195,11 +1232,8 @@ class JiggleScene(bpy.types.PropertyGroup):
     lastframe: bpy.props.IntProperty()
     loop: bpy.props.BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=True)
     preroll: bpy.props.IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=30)
-    is_preroll: bpy.props.BoolProperty(default=False)
     bake_overwrite: bpy.props.BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
     bake_nla: bpy.props.BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
-    is_rendering: bpy.props.BoolProperty(default=False)
-    show_no_keyframes_warning: bpy.props.BoolProperty(default=True, options={'HIDDEN'})
     enable: bpy.props.BoolProperty(
         name = 'Enable Scene',
         description = 'Enable jiggle on this scene',
@@ -1341,7 +1375,6 @@ def register():
     bpy.app.handlers.render_pre.append(jiggle_render_pre)
     bpy.app.handlers.render_post.append(jiggle_render_post)
     bpy.app.handlers.render_cancel.append(jiggle_render_cancel)
-    bpy.app.handlers.load_post.append(jiggle_load)
 
 def unregister():
     bpy.utils.unregister_class(JiggleBone)
@@ -1373,19 +1406,9 @@ def unregister():
     bpy.app.handlers.render_pre.remove(jiggle_render_pre)
     bpy.app.handlers.render_post.remove(jiggle_render_post)
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
-    bpy.app.handlers.load_post.remove(jiggle_load)
 
-    global jiggle_overlay_handler, area_pose_overlay, area_simulation_overlay, jiggle_physics_resetting, jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache, jiggle_baking
-    if jiggle_overlay_handler is not None:
-        bpy.types.SpaceView3D.draw_handler_remove(jiggle_overlay_handler, 'WINDOW')
-
-    area_pose_overlay = {}
-    area_simulation_overlay = {}
-    jiggle_physics_resetting = False
-    jiggle_object_virtual_point_cache = {}
-    jiggle_scene_virtual_point_cache = None
-    jiggle_baking = False
-    jiggle_overlay_handler = None
+    global _jiggle_globals
+    _jiggle_globals.on_unregister()
     
 if __name__ == "__main__":
     register()
