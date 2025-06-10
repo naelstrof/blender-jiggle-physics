@@ -376,7 +376,7 @@ def get_virtual_particles_obj(obj):
                 continue
             visit(child, last_particle)
     for bone in bones:
-        if bone.jiggle.mode == 'root':
+        if bone.jiggle.mode == 'root' or bone.jiggle.mode == 'solo':
             visit(bone)
     jiggle_object_virtual_point_cache[obj] = virtual_particles_cache
     return virtual_particles_cache
