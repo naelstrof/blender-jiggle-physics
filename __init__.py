@@ -704,6 +704,7 @@ class SCENE_OT_JiggleToggleProfiler(bpy.types.Operator):
     
     def execute(self,context):
         context.scene.jiggle.debug = not context.scene.jiggle.debug
+        context.area.tag_redraw()
         return {'FINISHED'}
 
 class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
@@ -783,6 +784,7 @@ class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
         return {'FINISHED'}
 
 class SCENE_OT_JiggleProfile(bpy.types.Operator):
+    """Prints the execution time of the top 20 functions to the System Console"""
     bl_idname = "scene.jiggle_profile"
     bl_label = "Print Profiling Information to Console"
     
