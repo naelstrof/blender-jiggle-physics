@@ -83,9 +83,11 @@ class VirtualParticle:
         try:
             # Pose bones are ephemeral, so we need to get a new reference to the bone
             self.bone = self.obj.pose.bones[self.bone_name]
-        except:
-            jiggle_object_virtual_point_cache.clear()
-            raise
+        except KeyError:
+            # Detected deleted bone, rebuilding jiggle cache.
+            global _jiggle_globals
+            _jiggle_globals.clear_per_object_caches()
+            raise # we allow the exception to bubble up to stop evaluating the frame. The frame will be scuffed but the user is clearly in the middle of editing the rig and testing things.
 
         match self.particleType:
             case 'normal':
@@ -388,7 +390,6 @@ def get_virtual_particles(scene):
 
     if len(jiggle_scene_virtual_point_cache) > 0:
         return jiggle_scene_virtual_point_cache 
-    jiggle_scene_virtual_point_cache.clear()
     jiggle_objs = [obj for obj in scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute and (not obj.jiggle.freeze or jiggle_baking)]
     for obj in jiggle_objs:
         jiggle_scene_virtual_point_cache.extend(get_virtual_particles_obj(obj))
@@ -405,9 +406,6 @@ def is_bone_animated(armature, bone_name):
         if f'pose.bones["{bone_name}"]' in fcurve.data_path:
             return True
     return False
-
-def flatten(mat):
-    return [mat[j][i] for i in range(4) for j in range(4)]
 
 def reset_bone(b):
     head_pos = (b.id_data.matrix_world@b.head)
@@ -573,6 +571,7 @@ def draw_callback():
         
 @persistent                
 def jiggle_post(scene,depsgraph):
+
     global _jiggle_globals
     _jiggle_globals.clear_per_frame_caches()
     physics_resetting = _jiggle_globals.physics_resetting
@@ -582,21 +581,25 @@ def jiggle_post(scene,depsgraph):
 
     if physics_resetting:
         return
-    if scene.jiggle.debug: profiler.enable()
-    jiggle = scene.jiggle
     objects = scene.objects
+    jiggle = scene.jiggle
 
-    if not scene.jiggle.enable or is_rendering:
-        if scene.jiggle.debug: profiler.disable()
+    if not jiggle.enable or is_rendering:
         return
+
+    if jiggle.debug: profiler.enable()
 
     lastframe = jiggle.lastframe
 
     if (lastframe == scene.frame_current):
-        virtual_particles = get_virtual_particles(scene)
+        try:
+            virtual_particles = get_virtual_particles(scene)
+        except KeyError:
+            if jiggle.debug: profiler.disable()
+            return
         for particle in virtual_particles:
             particle.apply_pose()
-        if scene.jiggle.debug: profiler.disable()
+        if jiggle.debug: profiler.disable()
         return
 
     frame_start, frame_end, frame_current = scene.frame_start, scene.frame_end, scene.frame_current
@@ -605,7 +608,7 @@ def jiggle_post(scene,depsgraph):
 
     if (frame_current == frame_start) and not frame_loop and not frame_is_preroll:
         jiggle_reset(bpy.context)
-        if scene.jiggle.debug: profiler.disable()
+        if jiggle.debug: profiler.disable()
         return
 
     if frame_current >= lastframe:
@@ -623,7 +626,11 @@ def jiggle_post(scene,depsgraph):
     dt2 = dt*dt
     accumulatedFrames = frames_elapsed
 
-    virtual_particles = get_virtual_particles(scene)
+    try:
+        virtual_particles = get_virtual_particles(scene)
+    except KeyError:
+        if jiggle.debug: profiler.disable()
+        return
     for _ in range(accumulatedFrames):
         for particle in virtual_particles:
             particle.verlet_integrate(dt2, scene.gravity)
@@ -635,7 +642,7 @@ def jiggle_post(scene,depsgraph):
         particle.apply_pose()
         particle.write()
 
-    if scene.jiggle.debug: profiler.disable()
+    if jiggle.debug: profiler.disable()
 
 def collider_poll(self, object):
     return object.type == 'MESH' or object.type == 'EMPTY'
