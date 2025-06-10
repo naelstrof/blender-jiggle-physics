@@ -80,14 +80,7 @@ STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,0.0,0.0,1.0,0.1)
 class VirtualParticle:
     def read(self):
         self.obj_world_matrix = self.obj.matrix_world
-        try:
-            # Pose bones are ephemeral, so we need to get a new reference to the bone
-            self.bone = self.obj.pose.bones[self.bone_name]
-        except KeyError:
-            # Detected deleted bone, rebuilding jiggle cache.
-            global _jiggle_globals
-            _jiggle_globals.clear_per_object_caches()
-            raise # we allow the exception to bubble up to stop evaluating the frame. The frame will be scuffed but the user is clearly in the middle of editing the rig and testing things.
+        self.bone = self.obj.pose.bones[self.bone_name]
 
         match self.particleType:
             case 'normal':
@@ -595,6 +588,7 @@ def jiggle_post(scene,depsgraph):
         try:
             virtual_particles = get_virtual_particles(scene)
         except KeyError:
+            jiggle_reset(bpy.context)
             if jiggle.debug: profiler.disable()
             return
         for particle in virtual_particles:
@@ -629,6 +623,7 @@ def jiggle_post(scene,depsgraph):
     try:
         virtual_particles = get_virtual_particles(scene)
     except KeyError:
+        jiggle_reset(bpy.context)
         if jiggle.debug: profiler.disable()
         return
     for _ in range(accumulatedFrames):
@@ -690,9 +685,9 @@ class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
         return {'FINISHED'}
 
 def jiggle_reset(context):
-    global jiggle_object_virtual_point_cache, jiggle_scene_virtual_point_cache
-    jiggle_scene_virtual_point_cache = None
-    jiggle_object_virtual_point_cache.clear()
+    global _jiggle_globals
+    _jiggle_globals.clear_per_object_caches()
+    _jiggle_globals.clear_per_frame_caches()
     jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute]
     for ob in jiggle_objs:
         mark_jiggle_tree(ob)
