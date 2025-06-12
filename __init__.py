@@ -134,6 +134,7 @@ class VirtualParticle:
         self.desired_length_to_parent = 1
         self.children = []
         self.jiggle_settings = None
+        self.desired_constrain = ZERO_VEC
         self.needs_collision = False
         self.read()
 
@@ -236,37 +237,71 @@ class VirtualParticle:
 
     def constrain(self, depsgraph):
         if not self.parent:
+            self.desired_constrain = self.working_position
             return
 
         # constrain angle
         parent_aim_pose = (self.parent_pose - self.parent.parent_pose).normalized()
         if not self.parent.parent:
-            parent_aim = (self.parent.working_position - self.parent.parent_pose).normalized()
+            parent_aim = (self.parent.desired_constrain - self.parent.parent_pose).normalized()
         else:
-            parent_aim = (self.parent.working_position - self.parent.parent.working_position).normalized()
+            parent_aim = (self.parent.desired_constrain - self.parent.parent.desired_constrain).normalized()
 
-        current_length = (self.working_position - self.parent.working_position).length
+        current_length = (self.working_position - self.parent.desired_constrain).length
         from_to_rot = parent_aim_pose.rotation_difference(parent_aim)
         current_pose_dir = (self.pose - self.parent_pose).normalized()
         constraintTarget = from_to_rot @ (current_pose_dir * current_length)
 
-        error = (self.working_position - (self.parent.working_position + constraintTarget)).length
+        error = (self.working_position - (self.parent.desired_constrain + constraintTarget)).length
         error /= self.desired_length_to_parent
         error = min(error, 1.0)
         error = pow(error, self.parent.jiggle_settings.elasticity_soften*self.parent.jiggle_settings.elasticity_soften)
-        self.working_position = self.working_position.lerp(self.parent.working_position + constraintTarget, self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error)
+        self.desired_constrain = self.working_position.lerp(self.parent.desired_constrain + constraintTarget, self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error)
+        forward_projection = self.parent.desired_constrain + constraintTarget
 
         if self.needs_collision:
-            self.working_position = self.solve_collisions(depsgraph, self.working_position)
+            self.desired_constrain = self.solve_collisions(depsgraph, self.desired_constrain)
 
         length_elasticity = self.parent.jiggle_settings.length_elasticity * self.parent.jiggle_settings.length_elasticity
         if self.bone.bone.use_connect:
             length_elasticity = 1
 
         # constrain length
-        diff = self.working_position - self.parent.working_position
+        diff = self.desired_constrain - self.parent.desired_constrain
         dir = diff.normalized()
-        self.working_position = self.working_position.lerp(self.parent.working_position + dir * self.desired_length_to_parent, length_elasticity)
+        forward_constraint = self.desired_constrain.lerp(self.parent.desired_constrain + dir * self.desired_length_to_parent, length_elasticity)
+        self.desired_constrain = forward_constraint
+
+        if not self.needs_collision:
+            self.working_position = forward_constraint
+            return
+
+        if len(self.children) > 0:
+            child = self.children[0]
+
+            aim_pose = (child.pose - self.parent_pose).normalized()
+            aim = (child.working_position - self.parent.working_position).normalized()
+            from_to_rot = aim_pose.rotation_difference(aim)
+            parent_to_self = (self.pose - self.parent_pose).normalized()
+            real_length = (self.working_position - self.parent.working_position).length
+            targetPos = (from_to_rot@(parent_to_self*real_length)) + self.parent.working_position
+
+            error = (self.working_position - targetPos).length
+            error /= self.desired_length_to_parent
+            error = min(error, 1.0)
+            error = pow(error, self.parent.jiggle_settings.elasticity_soften*self.parent.jiggle_settings.elasticity_soften)
+            backward_constraint = self.working_position.lerp(targetPos, (self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error))
+
+            child_length_elasticity = self.jiggle_settings.length_elasticity * self.jiggle_settings.length_elasticity
+            if child.bone.bone.use_connect:
+                child_length_elasticity = 1
+
+            cdiff = backward_constraint - child.working_position
+            cdir = cdiff.normalized()
+            backward_constraint = backward_constraint.lerp(child.working_position + cdir * child.desired_length_to_parent, child_length_elasticity*0.5)
+            self.working_position = forward_constraint.lerp(backward_constraint, 0.5)
+        else:
+            self.working_position = forward_constraint
 
     def finish_step(self):
         self.position_last = self.position
@@ -626,6 +661,7 @@ def jiggle_post(scene,depsgraph):
         jiggle_reset(bpy.context)
         if jiggle.debug: profiler.disable()
         return
+    print("START")
     for _ in range(accumulatedFrames):
         for particle in virtual_particles:
             particle.verlet_integrate(dt2, scene.gravity)
