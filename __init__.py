@@ -75,7 +75,7 @@ class JiggleSettings:
     def from_bone(cls, bone):
         return cls(bone.jiggle_angle_elasticity, bone.jiggle_length_elasticity, bone.jiggle_elasticity_soften, bone.jiggle_gravity, bone.jiggle_blend, bone.jiggle_air_drag, bone.jiggle_friction, bone.jiggle_collision_radius)
 
-STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,0.0,0.0,1.0,0.1)
+STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,1.0,0.0,1.0,0.1)
 
 class VirtualParticle:
     def read(self):
@@ -272,7 +272,7 @@ class VirtualParticle:
         forward_constraint = self.desired_constrain.lerp(self.parent.desired_constrain + dir * self.desired_length_to_parent, length_elasticity)
         self.desired_constrain = forward_constraint
 
-        if not self.needs_collision:
+        if not self.needs_collision or self.parent.jiggle_settings.angle_elasticity == 1 and self.parent.jiggle_settings.length_elasticity == 1:
             self.working_position = forward_constraint
             return
 
@@ -661,7 +661,6 @@ def jiggle_post(scene,depsgraph):
         jiggle_reset(bpy.context)
         if jiggle.debug: profiler.disable()
         return
-    print("START")
     for _ in range(accumulatedFrames):
         for particle in virtual_particles:
             particle.verlet_integrate(dt2, scene.gravity)
