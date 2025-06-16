@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "jiggle_physics"
-version = "4.0.3"
+version = "4.0.4"
 name = "Jiggle Physics"
 tagline = "Add stretchy jiggle physics to your Blender rigs"
 maintainer = "naelstrof <naelstrof@gmail.com>"
