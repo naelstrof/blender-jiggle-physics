@@ -1,4 +1,4 @@
-import bpy, math, cProfile, pstats, gpu
+import bpy, math, cProfile, pstats, gpu 
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
@@ -62,9 +62,10 @@ class JiggleGlobals:
 _jiggle_globals = JiggleGlobals()
 
 class JiggleSettings:
-    def __init__(self, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
+    def __init__(self, root_elasticity, angle_elasticity, length_elasticity, elasticity_soften, gravity, blend, air_drag, friction, collision_radius):
         self.angle_elasticity = angle_elasticity
         self.length_elasticity = length_elasticity
+        self.root_elasticity = root_elasticity
         self.elasticity_soften = elasticity_soften
         self.gravity = gravity
         self.blend = blend
@@ -73,9 +74,9 @@ class JiggleSettings:
         self.collision_radius = collision_radius
     @classmethod
     def from_bone(cls, bone):
-        return cls(bone.jiggle_angle_elasticity, bone.jiggle_length_elasticity, bone.jiggle_elasticity_soften, bone.jiggle_gravity, bone.jiggle_blend, bone.jiggle_air_drag, bone.jiggle_friction, bone.jiggle_collision_radius)
+        return cls(bone.jiggle_root_elasticity, bone.jiggle_angle_elasticity, bone.jiggle_length_elasticity, bone.jiggle_elasticity_soften, bone.jiggle_gravity, bone.jiggle_blend, bone.jiggle_air_drag, bone.jiggle_friction, bone.jiggle_collision_radius)
 
-STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,0.0,0.0,1.0,0.0,1.0,0.1)
+STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,1.0,0.0,0.0,1.0,0.0,1.0,0.1)
 
 class VirtualParticle:
     def read(self):
@@ -101,8 +102,8 @@ class VirtualParticle:
                 if diff.length < MERGE_BONE_THRESHOLD:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
                 self.pose = self.obj_world_matrix@(diff+headpos)
+                self.parent_pose = self.obj_world_matrix@((diff*2.0)+headpos)
                 self.working_position = self.pose.copy()
-                self.parent_pose = diff+self.pose
             case 'forwardProject':
                 self.position = self.bone.jiggle.position2.copy()
                 self.position_last = self.bone.jiggle.position_last2
@@ -168,7 +169,11 @@ class VirtualParticle:
         delta = self.position - self.position_last
         local_space_velocity = delta - (self.parent.position - self.parent.position_last)
         velocity = delta - local_space_velocity
-        self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
+        if self.parent.parent:
+            self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
+        else:
+            self.working_position = self.position + velocity * (1.0-self.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.jiggle_settings.friction) + gravity * self.jiggle_settings.gravity * dt2
+
 
     def mesh_collide(self, collider, depsgraph, position):
         collider_matrix = collider.matrix_world
@@ -235,12 +240,7 @@ class VirtualParticle:
                     position = self.empty_collide(collider, position)
         return position
 
-    def constrain(self, depsgraph):
-        if not self.parent:
-            self.desired_constrain = self.working_position
-            return
-
-        # constrain angle
+    def constrain_angle(self):
         parent_aim_pose = (self.parent_pose - self.parent.parent_pose).normalized()
         if not self.parent.parent:
             parent_aim = (self.parent.desired_constrain - self.parent.parent_pose).normalized()
@@ -257,7 +257,23 @@ class VirtualParticle:
         error = min(error, 1.0)
         error = pow(error, self.parent.jiggle_settings.elasticity_soften*self.parent.jiggle_settings.elasticity_soften)
         self.desired_constrain = self.working_position.lerp(self.parent.desired_constrain + constraintTarget, self.parent.jiggle_settings.angle_elasticity * self.parent.jiggle_settings.angle_elasticity * error)
-        forward_projection = self.parent.desired_constrain + constraintTarget
+        return self.parent.desired_constrain + constraintTarget
+
+    def constrain(self, depsgraph):
+        if not self.parent:
+            return
+
+        if not self.parent.parent:
+            self.desired_constrain = self.working_position = self.working_position.lerp(self.pose, self.jiggle_settings.root_elasticity*self.jiggle_settings.root_elasticity)
+
+            headpos = self.bone.head
+            tailpos = self.bone.tail
+            diff = (headpos-tailpos)
+            self.parent.desired_constrain = self.desired_constrain + (self.obj_world_matrix.to_3x3()@diff)
+            return
+
+        # constrain angle
+        forward_constraint = self.constrain_angle()
 
         if self.needs_collision:
             self.desired_constrain = self.solve_collisions(depsgraph, self.desired_constrain)
@@ -448,7 +464,7 @@ def update_pose_bone_jiggle_prop(self,context,prop):
     if _jiggle_globals.propagating_props:
         return
     def keyframe(auto_key, b, prop):
-        if auto_key and prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
+        if auto_key and prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
             b.keyframe_insert(data_path=prop, index=-1)
     _jiggle_globals.propagating_props = True
     try:
@@ -710,6 +726,7 @@ class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
             other_bone.jiggle.collider_type = bone.jiggle.collider_type
             other_bone.jiggle.collider = bone.jiggle.collider
             other_bone.jiggle.collider_collection = bone.jiggle.collider_collection
+            other_bone.jiggle_root_elasticity = bone.jiggle_root_elasticity
             other_bone.jiggle_angle_elasticity = bone.jiggle_angle_elasticity
             other_bone.jiggle_length_elasticity = bone.jiggle_length_elasticity
             other_bone.jiggle_elasticity_soften = bone.jiggle_elasticity_soften
@@ -813,7 +830,7 @@ class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
     def execute(self,context):
         action = context.object.animation_data.action
         for bone in context.selected_pose_bones:
-            for prop in ['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
+            for prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
                 data_path = f'pose.bones["{bone.name}"].{prop}'
                 fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path == data_path]
                 for fc in fcurves_to_remove:
@@ -1147,7 +1164,10 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
                 layout.prop(b, p)
         
         col = layout.column(align=True)
-        drawprops(col,b,['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction'])
+        if b.jiggle.mode == 'root' or b.jiggle.mode == 'solo':
+            drawprops(col,b,['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction'])
+        else:
+            drawprops(col,b,['jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction'])
         col.separator()
         collision = False
         col.prop(b.jiggle, 'collider_type', text='Collisions')
@@ -1326,6 +1346,15 @@ def register():
         max=1,
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_length_elasticity')
+    )
+    bpy.types.PoseBone.jiggle_root_elasticity = bpy.props.FloatProperty(
+        name = 'Root Elasticity',
+        description = 'Elasticity of the root bone, higher means more rigid to tension',
+        min = 0,
+        default = 0.8,
+        max=1,
+        override={'LIBRARY_OVERRIDABLE'},
+        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_root_elasticity')
     )
     bpy.types.PoseBone.jiggle_elasticity_soften = bpy.props.FloatProperty(
         name = 'Elasticity Soften',
