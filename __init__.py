@@ -1,7 +1,31 @@
-import bpy, math, cProfile, pstats, gpu 
+import bpy, math, cProfile, pstats, gpu
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
+
+blender_version = bpy.app.version
+
+bl_info = {}
+
+if blender_version < (4, 0, 0):
+    import toml, os
+    manifest_path = os.path.join(os.path.dirname(__file__), "blender_manifest.toml")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = toml.load(f)
+
+    global bl_info
+    bl_info = {
+        "name": manifest.get("name", "Unknown Add-on"),
+        "description": manifest.get("description", "No description provided."),
+        "author": manifest.get("author", "Unknown Author"),
+        "version": tuple(map(int, manifest.get("version", "0.0.0").split(".")))
+        "blender": tuple(map(int, manifest.get("blender_version_min", "4.2.0").split("."))),
+        "wiki_url": manifest.get("website", ""),
+    }
+    print("huh?")
+else:
+    print("GUH")
+
 
 ZERO_VEC = Vector((0,0,0))
 IDENTITY_MAT = Matrix.Identity(4)
