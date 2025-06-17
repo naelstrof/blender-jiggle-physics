@@ -1,4 +1,6 @@
-import bpy, math, cProfile, pstats, gpu 
+import bpy, math, cProfile, pstats, gpu
+from bpy.types import Scene, Panel, Operator, Menu, PoseBone, SpaceView3D, Object, PropertyGroup, Collection
+from bpy.props import EnumProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, PointerProperty
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
@@ -33,13 +35,13 @@ class JiggleGlobals:
         return self.area_overlays[area_pointer]
     def update_overlay_draw_handler(self):
         if self.overlay_handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
+            SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
 
         self.overlay_handler = None
         # FIXME: This doesn't handle areas being destroyed
         for area_pointer, area_props in self.area_overlays.items():
             if area_props.overlay_simulation or area_props.overlay_pose:
-                self.overlay_handler = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
+                self.overlay_handler = SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
                 break
     def clear_per_object_caches(self):
         self.jiggle_object_virtual_point_cache.clear()
@@ -56,7 +58,7 @@ class JiggleGlobals:
         self.jiggle_scene_virtual_point_cache.clear()
         self.propagating_props = False
         if self.overlay_handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
+            SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
 
 
 _jiggle_globals = JiggleGlobals()
@@ -708,7 +710,7 @@ def jiggle_render_cancel(scene):
     global _jiggle_globals
     _jiggle_globals.is_rendering = False
             
-class ARMATURE_OT_JiggleCopy(bpy.types.Operator):
+class ARMATURE_OT_JiggleCopy(Operator):
     """Copy active jiggle settings to selected bones"""
     bl_idname = "armature.jiggle_copy"
     bl_label = "Copy Settings to Selected"
@@ -747,7 +749,7 @@ def jiggle_reset(context):
             reset_bone(bone)
     context.scene.jiggle.lastframe = context.scene.frame_current
 
-class SCENE_OT_JiggleToggleProfiler(bpy.types.Operator):
+class SCENE_OT_JiggleToggleProfiler(Operator):
     """Toggle the jiggle profiler"""
     bl_idname = "scene.jiggle_toggle_profiler"
     bl_label = "Toggle Jiggle Profiler"
@@ -761,7 +763,7 @@ class SCENE_OT_JiggleToggleProfiler(bpy.types.Operator):
         context.area.tag_redraw()
         return {'FINISHED'}
 
-class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
+class VIEW3D_OT_JiggleTogglePoseOverlay(Operator):
     """Toggle the detected rest pose overlay"""
     bl_idname = "view3d.jiggle_toggle_pose_overlay"
     bl_label = "Toggle Jiggle Rest Pose Overlay"
@@ -778,7 +780,7 @@ class VIEW3D_OT_JiggleTogglePoseOverlay(bpy.types.Operator):
         context.area.tag_redraw()
         return {'FINISHED'}
 
-class VIEW3D_OT_JiggleToggleSimulationOverlay(bpy.types.Operator):
+class VIEW3D_OT_JiggleToggleSimulationOverlay(Operator):
     """Toggle the jiggle simulation overlay"""
     bl_idname = "view3d.jiggle_toggle_simulation_overlay"
     bl_label = "Toggle Jiggle Simulation Overlay"
@@ -795,7 +797,7 @@ class VIEW3D_OT_JiggleToggleSimulationOverlay(bpy.types.Operator):
         context.area.tag_redraw()
         return {'FINISHED'}
 
-class SCENE_OT_JiggleReset(bpy.types.Operator):
+class SCENE_OT_JiggleReset(Operator):
     """Reset jiggle physics of scene, bone, or object depending on context"""
     bl_idname = "scene.jiggle_reset"
     bl_label = "Reset Physics"
@@ -816,7 +818,7 @@ class SCENE_OT_JiggleReset(bpy.types.Operator):
             _jiggle_globals.physics_resetting = False
         return {'FINISHED'}
 
-class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
+class ANIM_OT_JiggleClearKeyframes(Operator):
     """Reset keyframes on jiggle parameters"""
     bl_idname = "anim.jiggle_clear_keyframes"
     bl_label = "Clear Parameter Keyframes"
@@ -837,7 +839,7 @@ class ANIM_OT_JiggleClearKeyframes(bpy.types.Operator):
                     action.fcurves.remove(fc)
         return {'FINISHED'}
 
-class SCENE_OT_JiggleProfile(bpy.types.Operator):
+class SCENE_OT_JiggleProfile(Operator):
     """Prints the execution time of the top 20 functions to the System Console"""
     bl_idname = "scene.jiggle_profile"
     bl_label = "Print Profiling Information to Console"
@@ -859,7 +861,7 @@ def jiggle_select(context):
         for bone in jiggle_bones:
             bone.bone.select = True
     
-class ARMATURE_OT_JiggleSelect(bpy.types.Operator):
+class ARMATURE_OT_JiggleSelect(Operator):
     """Select jiggle bones on selected objects in pose mode"""
     bl_idname = "armature.jiggle_select"
     bl_label = "Select Enabled"
@@ -873,7 +875,7 @@ class ARMATURE_OT_JiggleSelect(bpy.types.Operator):
         jiggle_select(context)
         return {'FINISHED'}
     
-class ARMATURE_OT_JiggleBake(bpy.types.Operator):
+class ARMATURE_OT_JiggleBake(Operator):
     """Bake this object's visible jiggle bones to keyframes"""
     bl_idname = "armature.jiggle_bake"
     bl_label = "Bake Jiggle"
@@ -915,21 +917,13 @@ class ARMATURE_OT_JiggleBake(bpy.types.Operator):
                 _jiggle_globals.is_preroll = True
                 preroll -= 1
             #bake
-            if bpy.app.version[0] >= 4 and bpy.app.version[1] > 0:
-                bpy.ops.nla.bake(frame_start = context.scene.frame_start,
-                                frame_end = context.scene.frame_end,
-                                only_selected = True,
-                                visual_keying = True,
-                                use_current_action = context.scene.jiggle.bake_overwrite,
-                                bake_types={'POSE'},
-                                channel_types={'LOCATION','ROTATION','SCALE'})
-            else:
-                bpy.ops.nla.bake(frame_start = context.scene.frame_start,
-                                frame_end = context.scene.frame_end,
-                                only_selected = True,
-                                visual_keying = True,
-                                use_current_action = context.scene.jiggle.bake_overwrite,
-                                bake_types={'POSE'})
+            bpy.ops.nla.bake(frame_start = context.scene.frame_start,
+                            frame_end = context.scene.frame_end,
+                            only_selected = True,
+                            visual_keying = True,
+                            use_current_action = context.scene.jiggle.bake_overwrite,
+                            bake_types={'POSE'},
+                            channel_types={'LOCATION','ROTATION','SCALE'})
             _jiggle_globals.is_preroll = False
             context.object.jiggle.freeze = True
             if not context.scene.jiggle.bake_overwrite:
@@ -957,7 +951,7 @@ def draw_jiggle_overlay_menu(self, context):
     icon = 'CHECKBOX_HLT' if area_properties.overlay_simulation else 'CHECKBOX_DEHLT'
     row.operator(VIEW3D_OT_JiggleToggleSimulationOverlay.bl_idname, text="Show Simulation", icon=icon, emboss=False)
 
-class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
+class JIGGLE_PT_Settings(JigglePanel, Panel):
     bl_label = "Jiggle Physics"
         
     def draw(self,context):
@@ -985,7 +979,7 @@ class JIGGLE_PT_Settings(JigglePanel, bpy.types.Panel):
             return
 
 
-class JIGGLE_OT_bone_connected_disable(bpy.types.Operator):
+class JIGGLE_OT_bone_connected_disable(Operator):
     bl_idname = "armature.jiggle_bone_connected_disable"
     bl_label = "Disconnect Selected Bones"
     bl_description = "Connected bones ignore length elasticity, preventing them from stretching. Click this button to automatically fix"
@@ -1011,7 +1005,7 @@ class JIGGLE_OT_bone_connected_disable(bpy.types.Operator):
         bpy.ops.object.mode_set(mode=previous_mode)
         return {'FINISHED'}
 
-class JIGGLE_OT_bone_constraints_disable(bpy.types.Operator):
+class JIGGLE_OT_bone_constraints_disable(Operator):
     bl_idname = "armature.jiggle_bone_constraints_disable"
     bl_label = "Disable Constraints"
     bl_description = "Constraints are applied after jiggle, which can cause strange behavior. Click this button to automatically disable constraints on selected bones"
@@ -1030,7 +1024,7 @@ class JIGGLE_OT_bone_constraints_disable(bpy.types.Operator):
                 constraint.enabled = False
         return {'FINISHED'}
 
-class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_NoKeyframesWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1048,7 +1042,7 @@ class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'Position and rotation keyframes are used for the rest pose.')
         box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
 
-class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1069,7 +1063,7 @@ class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'You can safely ignore this if you are intending to constrain the jiggle pose.')
         self.layout.operator(JIGGLE_OT_bone_constraints_disable.bl_idname, text='Disable Constraints on Selected Bones')
 
-class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1090,7 +1084,7 @@ class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,bpy.types.Panel):
         self.layout.operator(JIGGLE_OT_bone_connected_disable.bl_idname, text='Disconnect Selected Bones')
 
 
-class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_NoKeyframesWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1108,7 +1102,7 @@ class JIGGLE_PT_NoKeyframesWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'Position and rotation keyframes are used for the rest pose.')
         box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
 
-class JIGGLE_PT_MeshCollisionWarning(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_MeshCollisionWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1138,7 +1132,7 @@ class JIGGLE_PT_MeshCollisionWarning(JigglePanel,bpy.types.Panel):
         box.label(text=f'Meshes are not convex, making them inoptimal for collisions.')
         box.label(text=f'Please use scaled Empty spheres instead (Add -> Empty -> Sphere)')
 
-class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_Bone(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {'HEADER_LAYOUT_EXPAND'}
@@ -1192,7 +1186,7 @@ class JIGGLE_PT_Bone(JigglePanel,bpy.types.Panel):
         drawprops(col,b,['jiggle_collision_radius'])
         layout.operator(ANIM_OT_JiggleClearKeyframes.bl_idname)
 
-class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_Utilities(JigglePanel,Panel):
     bl_label = 'Global Jiggle Utilities'
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {"DEFAULT_CLOSED"}
@@ -1213,7 +1207,7 @@ class JIGGLE_PT_Utilities(JigglePanel,bpy.types.Panel):
         if context.scene.jiggle.debug: col.operator('scene.jiggle_profile')
         layout.prop(context.scene.jiggle, 'loop')
         
-class JIGGLE_PT_Bake(JigglePanel,bpy.types.Panel):
+class JIGGLE_PT_Bake(JigglePanel,Panel):
     bl_label = 'Bake Jiggle'
     bl_parent_id = 'JIGGLE_PT_Utilities'
     bl_options = {"DEFAULT_CLOSED"}
@@ -1234,27 +1228,27 @@ class JIGGLE_PT_Bake(JigglePanel,bpy.types.Panel):
         row.prop(jiggle, 'bake_nla')
         layout.operator('armature.jiggle_bake')
 
-class JiggleBone(bpy.types.PropertyGroup):
-    position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    position_last0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    rest_pose_position0: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+class JiggleBone(PropertyGroup):
+    position0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    position_last0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
-    position1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    position_last1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    rest_pose_position1: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    position1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    position_last1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
-    position2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    position_last2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-    rest_pose_position2: bpy.props.FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    position2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    position_last2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
+    rest_pose_position2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
 
-    enable: bpy.props.BoolProperty(
+    enable: BoolProperty(
         name = 'Enable Bone Jiggle',
         description = "Enable jiggle on this bone", default = False,
         override={'LIBRARY_OVERRIDABLE'},
         options={'HIDDEN'},
         update=lambda s, c: update_nested_jiggle_prop(s, c, 'enable')
     )
-    mode: bpy.props.EnumProperty(
+    mode: EnumProperty(
         name='Jiggle Mode',
         items=[('none','None','Not jiggled, and contains no jiggle bone children'),
                ('root','Root','A root jiggle bone'),
@@ -1265,62 +1259,62 @@ class JiggleBone(bpy.types.PropertyGroup):
         override={'LIBRARY_OVERRIDABLE'},
         options={'HIDDEN'},
     )
-    collider_type: bpy.props.EnumProperty(
+    collider_type: EnumProperty(
         name='Collider Type',
         items=[('Object','Object','Collide with a selected mesh'),('Collection','Collection','Collide with all meshes in selected collection')],
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_type')
     )
-    collider: bpy.props.PointerProperty(
+    collider: PointerProperty(
         name='Collider Object', 
         description='Mesh object to collide with', 
-        type=bpy.types.Object, 
+        type=Object, 
         poll = collider_poll, 
         override={'LIBRARY_OVERRIDABLE'}, 
         update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider')
     )
-    collider_collection: bpy.props.PointerProperty(
+    collider_collection: PointerProperty(
         name = 'Collider Collection', 
         description='Collection to collide with', 
-        type=bpy.types.Collection, 
+        type=Collection, 
         override={'LIBRARY_OVERRIDABLE'}, 
         update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_collection')
     )
     
-class JiggleScene(bpy.types.PropertyGroup):
-    lastframe: bpy.props.IntProperty()
-    loop: bpy.props.BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=False)
-    preroll: bpy.props.IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=30)
-    bake_overwrite: bpy.props.BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
-    bake_nla: bpy.props.BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
-    enable: bpy.props.BoolProperty(
+class JiggleScene(PropertyGroup):
+    lastframe: IntProperty()
+    loop: BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=False)
+    preroll: IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=30)
+    bake_overwrite: BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
+    bake_nla: BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
+    enable: BoolProperty(
         name = 'Enable Scene',
         description = 'Enable jiggle on this scene',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
     )
-    debug: bpy.props.BoolProperty(
+    debug: BoolProperty(
         name = 'Enable debug',
         description = 'Enable profiling and debug features',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
     )
 
-class JiggleObject(bpy.types.PropertyGroup):
-    enable: bpy.props.BoolProperty(
+class JiggleObject(PropertyGroup):
+    enable: BoolProperty(
         name = 'Enable Armature',
         description = 'Enable jiggle on this armature',
         default = False,
         options={'HIDDEN'},
         override={'LIBRARY_OVERRIDABLE'}
     )
-    mute: bpy.props.BoolProperty(
+    mute: BoolProperty(
         name = 'Mute Armature',
         description = 'Mute jiggle on this armature',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
     )
-    freeze: bpy.props.BoolProperty(
+    freeze: BoolProperty(
         name = 'Freeze Jiggle',
         description = 'Jiggle Calculation frozen after baking',
         default = False,
@@ -1329,7 +1323,7 @@ class JiggleObject(bpy.types.PropertyGroup):
 
 def register():
     # These properties are strictly animatable properties, as nested properties cannot be animated on pose bones.
-    bpy.types.PoseBone.jiggle_angle_elasticity = bpy.props.FloatProperty(
+    PoseBone.jiggle_angle_elasticity = FloatProperty(
         name = 'Angle Elasticity',
         description = 'Spring angle stiffness, higher means more rigid. Also has a small effect on the bone length',
         min = 0,
@@ -1338,7 +1332,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_angle_elasticity')
     )
-    bpy.types.PoseBone.jiggle_length_elasticity = bpy.props.FloatProperty(
+    PoseBone.jiggle_length_elasticity = FloatProperty(
         name = 'Length Elasticity',
         description = 'Spring length stiffness, higher means more rigid to tension',
         min = 0,
@@ -1347,7 +1341,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_length_elasticity')
     )
-    bpy.types.PoseBone.jiggle_root_elasticity = bpy.props.FloatProperty(
+    PoseBone.jiggle_root_elasticity = FloatProperty(
         name = 'Root Elasticity',
         description = 'Elasticity of the root bone, higher means more rigid to tension',
         min = 0,
@@ -1356,7 +1350,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_root_elasticity')
     )
-    bpy.types.PoseBone.jiggle_elasticity_soften = bpy.props.FloatProperty(
+    PoseBone.jiggle_elasticity_soften = FloatProperty(
         name = 'Elasticity Soften',
         description = 'Weakens the elasticity of the bone when its closer to the target pose. Higher means more like a free-rolling-ball-socket',
         min = 0,
@@ -1365,14 +1359,14 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_elasticity_soften')
     )
-    bpy.types.PoseBone.jiggle_gravity = bpy.props.FloatProperty(
+    PoseBone.jiggle_gravity = FloatProperty(
         name = 'Gravity',
         description = 'Multiplier for scene gravity',
         default = 1,
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_gravity')
     )
-    bpy.types.PoseBone.jiggle_blend = bpy.props.FloatProperty(
+    PoseBone.jiggle_blend = FloatProperty(
         name = 'Blend',
         description = 'jiggle blend, 0 means no jiggle, 1 means full jiggle',
         min = 0,
@@ -1381,7 +1375,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_blend')
     )
-    bpy.types.PoseBone.jiggle_air_drag = bpy.props.FloatProperty(
+    PoseBone.jiggle_air_drag = FloatProperty(
         name = 'Air Drag',
         description = 'How much the bone is slowed down by air, higher means more drag',
         min = 0,
@@ -1390,7 +1384,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_air_drag')
     )
-    bpy.types.PoseBone.jiggle_friction = bpy.props.FloatProperty(
+    PoseBone.jiggle_friction = FloatProperty(
         name = 'Friction',
         description = 'Internal friction, higher means return to rest quicker',
         min = 0,
@@ -1399,7 +1393,7 @@ def register():
         override={'LIBRARY_OVERRIDABLE'},
         update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_friction')
     )
-    bpy.types.PoseBone.jiggle_collision_radius = bpy.props.FloatProperty(
+    PoseBone.jiggle_collision_radius = FloatProperty(
         name = 'Collision Radius',
         description = 'Collision radius for use in collision detection and depenetration.',
         min = 0,
@@ -1411,11 +1405,11 @@ def register():
     
     #internal variables
     bpy.utils.register_class(JiggleBone)
-    bpy.types.PoseBone.jiggle = bpy.props.PointerProperty(type=JiggleBone, override={'LIBRARY_OVERRIDABLE'})
+    PoseBone.jiggle = PointerProperty(type=JiggleBone, override={'LIBRARY_OVERRIDABLE'})
     bpy.utils.register_class(JiggleObject)
-    bpy.types.Object.jiggle = bpy.props.PointerProperty(type=JiggleObject, override={'LIBRARY_OVERRIDABLE'})
+    Object.jiggle = PointerProperty(type=JiggleObject, override={'LIBRARY_OVERRIDABLE'})
     bpy.utils.register_class(JiggleScene)
-    bpy.types.Scene.jiggle = bpy.props.PointerProperty(type=JiggleScene, override={'LIBRARY_OVERRIDABLE'})
+    Scene.jiggle = PointerProperty(type=JiggleScene, override={'LIBRARY_OVERRIDABLE'})
 
     bpy.utils.register_class(SCENE_OT_JiggleReset)
     bpy.utils.register_class(ANIM_OT_JiggleClearKeyframes)
