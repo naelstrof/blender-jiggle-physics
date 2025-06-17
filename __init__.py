@@ -1,11 +1,17 @@
+bl_info = {
+    'name': 'Jiggle Physics',
+    'description': 'Add stretchy jiggle physics to your Blender rigs',
+    'author': 'naelstrof <naelstrof@gmail.com>',
+    'blender': (3, 0, 0),
+    'version': (4, 2, 0),
+    'wiki_url': 'https://github.com/naelstrof/blender-jiggle-physics',
+    'category': 'Animation',
+}
+
 import bpy, math, cProfile, pstats, gpu
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
-
-from .__jiggleinfo import jiggle_info
-
-bl_info = jiggle_info
 
 ZERO_VEC = Vector((0,0,0))
 IDENTITY_MAT = Matrix.Identity(4)

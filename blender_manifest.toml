@@ -14,7 +14,7 @@ website = "https://github.com/naelstrof/blender-jiggle-physics"
 # # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = ["Animation"]
 
-blender_version_min = "4.2.0"
+blender_version_min = "3.0.0"
 
 # License conforming to https://spdx.org/licenses/ (use "SPDX: prefix)
 # https://docs.blender.org/manual/en/dev/advanced/extensions/licenses.html
