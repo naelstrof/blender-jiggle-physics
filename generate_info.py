@@ -46,11 +46,11 @@ def main():
             f.write(f"# Generated with: $ {sys.argv[0]} {args.input} {args.output}\n")
             f.write("#\n\n")
 
-            f.write("bl_info = {\n")
+            f.write("jiggle_info = {\n")
             for key, value in bl_info_dict.items():
                 f.write(f"    {repr(key)}: {repr(value)},\n")
             f.write("}\n")
-        print(f"bl_info written successfully.")
+        print(f"jiggle_info written successfully.")
     except Exception as e:
         print(f"Error writing output: {e}", file=sys.stderr)
         sys.exit(2)
