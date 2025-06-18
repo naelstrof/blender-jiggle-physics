@@ -1,6 +1,8 @@
 import bpy, math, cProfile, pstats, gpu
 from bpy.types import Scene, Panel, Operator, Menu, PoseBone, SpaceView3D, Object, PropertyGroup, Collection
-from bpy.props import EnumProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, PointerProperty
+from bpy.props import StringProperty, EnumProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, PointerProperty
+from bl_operators.presets import AddPresetBase
+from bl_ui.utils import PresetPanel
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
@@ -953,6 +955,9 @@ def draw_jiggle_overlay_menu(self, context):
 
 class JIGGLE_PT_Settings(JigglePanel, Panel):
     bl_label = "Jiggle Physics"
+
+    def draw_header(self,context):
+        JIGGLE_PT_JiggleBonePresets.draw_panel_header(self.layout)
         
     def draw(self,context):
         row = self.layout.row()
@@ -1228,6 +1233,48 @@ class JIGGLE_PT_Bake(JigglePanel,Panel):
         row.prop(jiggle, 'bake_nla')
         layout.operator('armature.jiggle_bake')
 
+class JIGGLE_PT_JiggleBonePresets(PresetPanel, Panel):
+    bl_label = "Jiggle Bone Presets"
+    preset_subdir = "jigglebones"
+    preset_operator = "script.execute_preset"
+    preset_add_operator = "armature.add_jigglebone_preset"
+
+class JIGGLE_MT_JiggleBonePresets(Menu):
+    bl_label = 'Jiggle Bone Presets'
+    preset_subdir = 'jigglebones'
+    preset_operator = 'script.execute_preset'
+    draw = Menu.draw_preset
+
+class JIGGLE_OT_AddJiggleBonePreset(AddPresetBase, Operator):
+    """Saves or removes the current jiggle bone settings on the active bone as a preset."""
+    bl_idname = 'armature.add_jigglebone_preset'
+    bl_label = 'Add/Remove Jiggle Bone preset'
+    preset_menu = 'JIGGLE_MT_JiggleBonePresets'
+    bl_options = {'UNDO', 'REGISTER'}
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.object and context.object.jiggle.enable and context.mode == 'POSE' and context.active_pose_bone and context.active_pose_bone.jiggle.enable
+
+    # Common variable used for all preset values
+    preset_defines = [
+        'b = bpy.context.active_pose_bone',
+    ]
+
+    preset_values = [
+        'b.jiggle_root_elasticity',
+        'b.jiggle_angle_elasticity',
+        'b.jiggle_length_elasticity',
+        'b.jiggle_elasticity_soften',
+        'b.jiggle_gravity',
+        'b.jiggle_blend',
+        'b.jiggle_air_drag',
+        'b.jiggle_friction',
+    ]
+
+    # Directory to store the presets
+    preset_subdir = 'jigglebones'
+
 class JiggleBone(PropertyGroup):
     position0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
@@ -1430,6 +1477,10 @@ def register():
     bpy.utils.register_class(VIEW3D_OT_JiggleTogglePoseOverlay)
     bpy.utils.register_class(VIEW3D_OT_JiggleToggleSimulationOverlay)
     bpy.utils.register_class(SCENE_OT_JiggleToggleProfiler)
+    bpy.utils.register_class(JIGGLE_PT_JiggleBonePresets)
+    bpy.utils.register_class(JIGGLE_MT_JiggleBonePresets)
+    bpy.utils.register_class(JIGGLE_OT_AddJiggleBonePreset)
+
 
     bpy.types.VIEW3D_PT_overlay.append(draw_jiggle_overlay_menu)
     
@@ -1461,6 +1512,9 @@ def unregister():
     bpy.utils.unregister_class(VIEW3D_OT_JiggleTogglePoseOverlay)
     bpy.utils.unregister_class(VIEW3D_OT_JiggleToggleSimulationOverlay)
     bpy.utils.unregister_class(SCENE_OT_JiggleToggleProfiler)
+    bpy.utils.unregister_class(JIGGLE_PT_JiggleBonePresets)
+    bpy.utils.unregister_class(JIGGLE_MT_JiggleBonePresets)
+    bpy.utils.unregister_class(JIGGLE_OT_AddJiggleBonePreset)
 
     bpy.types.VIEW3D_PT_overlay.remove(draw_jiggle_overlay_menu)
     
