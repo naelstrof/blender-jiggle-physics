@@ -1,4 +1,4 @@
-import bpy, math, cProfile, pstats, gpu
+import bpy, math, cProfile, pstats, gpu, os, shutil
 from bpy.types import Scene, Panel, Operator, Menu, PoseBone, SpaceView3D, Object, PropertyGroup, Collection
 from bpy.props import StringProperty, EnumProperty, BoolProperty, IntProperty, FloatProperty, FloatVectorProperty, PointerProperty
 from bl_operators.presets import AddPresetBase
@@ -631,7 +631,6 @@ def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
     for particle in virtual_particles:
         particle.apply_pose()
         particle.write()
-
 
 @persistent                
 def jiggle_post(scene,depsgraph):
@@ -1375,7 +1374,21 @@ class JiggleObject(PropertyGroup):
         override={'LIBRARY_OVERRIDABLE'}
     )
 
+def install_presets():
+    # Path to bundled presets
+    src_dir = os.path.join(os.path.dirname(__file__), "presets", "jigglebones")
+    # Blender's user preset directory
+    dst_dir = bpy.utils.user_resource('SCRIPTS', path="presets/jigglebones", create=True)
+
+    # Copy each preset if it doesn't exist already
+    for filename in os.listdir(src_dir):
+        src_file = os.path.join(src_dir, filename)
+        dst_file = os.path.join(dst_dir, filename)
+        if not os.path.exists(dst_file):
+            shutil.copyfile(src_file, dst_file)
+
 def register():
+    install_presets()
     # These properties are strictly animatable properties, as nested properties cannot be animated on pose bones.
     PoseBone.jiggle_angle_elasticity = FloatProperty(
         name = 'Angle Elasticity',
@@ -1406,7 +1419,7 @@ def register():
     )
     PoseBone.jiggle_elasticity_soften = FloatProperty(
         name = 'Elasticity Soften',
-        description = 'Weakens the elasticity of the bone when its closer to the target pose. Higher means more like a free-rolling-ball-socket',
+        description = 'Weakens the elasticity of the bone when its closer to the target pose. Allows something to stay soft at rest, yet still try to hold its shape when pushed too far.',
         min = 0,
         default = 0,
         max=1,
