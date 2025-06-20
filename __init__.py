@@ -118,7 +118,7 @@ class VirtualParticle:
                 if diff.length < MERGE_BONE_THRESHOLD:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
                 self.pose = self.obj_world_matrix@(headpos+diff)
-                self.working_position = self.pose.copy()
+                self.working_position = self.position.copy()
                 self.jiggle_settings = JiggleSettings.from_bone(self.bone) if not self.static else STATIC_JIGGLE_SETTINGS
         if self.parent:
             self.parent_pose = self.parent.pose
@@ -366,6 +366,7 @@ class VirtualParticle:
             prot = self.parent.rolling_error.inverted().slerp(IDENTITY_QUAT, 1-self.jiggle_settings.blend)
         else:
             prot = IDENTITY_QUAT
+
 
         parent_pose_aim = local_pose - (inverted_obj_matrix@self.parent_pose) 
         adjusted_pose = (inverted_obj_matrix@self.parent.working_position) + (self.parent.rolling_error@parent_pose_aim)
@@ -617,6 +618,21 @@ def draw_callback():
         batch2.draw(shader)
     if jiggle.debug: _jiggle_globals.profiler.disable()
         
+def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
+    dt = 1.0 / scene.render.fps
+    dt2 = dt*dt
+    for _ in range(framecount):
+        for particle in virtual_particles:
+            particle.verlet_integrate(dt2, scene.gravity)
+        for particle in virtual_particles:
+            particle.constrain(depsgraph)
+        for particle in virtual_particles:
+            particle.finish_step()
+    for particle in virtual_particles:
+        particle.apply_pose()
+        particle.write()
+
+
 @persistent                
 def jiggle_post(scene,depsgraph):
 
@@ -671,8 +687,6 @@ def jiggle_post(scene,depsgraph):
         frames_elapsed = 1
 
     jiggle.lastframe = frame_current
-    dt = 1.0 / scene.render.fps
-    dt2 = dt*dt
     accumulatedFrames = frames_elapsed
 
     try:
@@ -681,16 +695,8 @@ def jiggle_post(scene,depsgraph):
         jiggle_reset(bpy.context)
         if jiggle.debug: profiler.disable()
         return
-    for _ in range(accumulatedFrames):
-        for particle in virtual_particles:
-            particle.verlet_integrate(dt2, scene.gravity)
-        for particle in virtual_particles:
-            particle.constrain(depsgraph)
-        for particle in virtual_particles:
-            particle.finish_step()
-    for particle in virtual_particles:
-        particle.apply_pose()
-        particle.write()
+
+    jiggle_simulate(scene, depsgraph, virtual_particles, accumulatedFrames)
 
     if jiggle.debug: profiler.disable()
 
@@ -905,19 +911,20 @@ class ARMATURE_OT_JiggleBake(Operator):
             
             #preroll
             duration = context.scene.frame_end - context.scene.frame_start
-            preroll = context.scene.jiggle.preroll
             _jiggle_globals.is_preroll = False
             bpy.ops.pose.select_all(action='DESELECT')
             jiggle_select(context)
             jiggle_reset(context)
-            while preroll >= 0:
-                if context.scene.jiggle.loop:
+            if context.scene.jiggle.loop:
+                for preroll in reversed(range(context.scene.jiggle.preroll)):
                     frame = context.scene.frame_end - (preroll%duration)
                     context.scene.frame_set(frame)
-                else:
-                    context.scene.frame_set(context.scene.frame_start-preroll)
+                    _jiggle_globals.is_preroll = True
+            else:
+                context.scene.frame_set(context.scene.frame_start)
                 _jiggle_globals.is_preroll = True
-                preroll -= 1
+                virtual_particles = get_virtual_particles(context.scene)
+                jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
             #bake
             bpy.ops.nla.bake(frame_start = context.scene.frame_start,
                             frame_end = context.scene.frame_end,
