@@ -1375,17 +1375,20 @@ class JiggleObject(PropertyGroup):
     )
 
 def install_presets():
-    # Path to bundled presets
-    src_dir = os.path.join(os.path.dirname(__file__), "presets", "jigglebones")
-    # Blender's user preset directory
-    dst_dir = bpy.utils.user_resource('SCRIPTS', path="presets/jigglebones", create=True)
+    try:
+        # Path to bundled presets
+        src_dir = os.path.join(os.path.dirname(__file__), "presets", "jigglebones")
+        # Blender's user preset directory
+        dst_dir = bpy.utils.user_resource('SCRIPTS', path="presets/jigglebones", create=True)
 
-    # Copy each preset if it doesn't exist already
-    for filename in os.listdir(src_dir):
-        src_file = os.path.join(src_dir, filename)
-        dst_file = os.path.join(dst_dir, filename)
-        if not os.path.exists(dst_file):
-            shutil.copyfile(src_file, dst_file)
+        # Copy each preset if it doesn't exist already
+        for filename in os.listdir(src_dir):
+            src_file = os.path.join(src_dir, filename)
+            dst_file = os.path.join(dst_dir, filename)
+            if not os.path.exists(dst_file):
+                shutil.copyfile(src_file, dst_file)
+    except Exception as e:
+        print(f"Error installing default Jiggle Physics jigglebone presets: {e}")
 
 def register():
     install_presets()
@@ -1419,7 +1422,7 @@ def register():
     )
     PoseBone.jiggle_elasticity_soften = FloatProperty(
         name = 'Elasticity Soften',
-        description = 'Weakens the elasticity of the bone when its closer to the target pose. Allows something to stay soft at rest, yet still try to hold its shape when pushed too far.',
+        description = 'Weakens the elasticity of the bone when its closer to the target pose. Higher means more like a free-rolling-ball-socket',
         min = 0,
         default = 0,
         max=1,
