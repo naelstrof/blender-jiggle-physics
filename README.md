@@ -4,7 +4,7 @@ Jiggle Physics is a fork of the Wiggle 2 addon, with a variety of improvements.
 
 ## Installation
 
-Download the latest zip from [Releases](https://github.com/naelstrof/blender-jiggle-physics/releases/latest), install using your user preferences!
+Ensure you're using Blender 4.2 or higher. Then download the latest zip from [Releases](https://github.com/naelstrof/blender-jiggle-physics/releases/latest), install using your user preferences!
 
 ## Features
 
