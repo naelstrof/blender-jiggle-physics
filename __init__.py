@@ -82,6 +82,15 @@ class JiggleSettings:
 
 STATIC_JIGGLE_SETTINGS = JiggleSettings(1.0,1.0,1.0,0.0,0.0,1.0,0.0,1.0,0.1)
 
+def get_jiggle_settings(bone, static=False):
+    if static:
+        while not bone.jiggle.enable:
+            if not bone.parent:
+                return STATIC_JIGGLE_SETTINGS
+            bone = bone.parent
+        return JiggleSettings(1.0,1.0,1.0,0.0,0.0,bone.jiggle_blend,0.0,1.0,0.1)
+    return JiggleSettings.from_bone(bone)
+
 class VirtualParticle:
     def read(self):
         self.obj_world_matrix = self.obj.matrix_world
@@ -94,7 +103,7 @@ class VirtualParticle:
                 self.rest_pose_position = self.bone.jiggle.rest_pose_position1
                 self.pose = (self.obj_world_matrix@self.bone.head)
                 self.working_position = self.position.copy()
-                self.jiggle_settings = JiggleSettings.from_bone(self.bone) if not self.static else STATIC_JIGGLE_SETTINGS
+                self.jiggle_settings = get_jiggle_settings(self.bone, self.static)
             case 'backProject':
                 self.position = self.bone.jiggle.position0.copy()
                 self.position_last = self.bone.jiggle.position_last0
@@ -119,7 +128,7 @@ class VirtualParticle:
                     diff = diff.normalized()*MERGE_BONE_THRESHOLD*2
                 self.pose = self.obj_world_matrix@(headpos+diff)
                 self.working_position = self.position.copy()
-                self.jiggle_settings = JiggleSettings.from_bone(self.bone) if not self.static else STATIC_JIGGLE_SETTINGS
+                self.jiggle_settings = get_jiggle_settings(self.bone, self.static)
         if self.parent:
             self.parent_pose = self.parent.pose
         self.desired_length_to_parent = max((self.pose - self.parent_pose).length, MERGE_BONE_THRESHOLD)
