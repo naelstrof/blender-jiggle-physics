@@ -904,6 +904,11 @@ class ARMATURE_OT_JiggleBake(Operator):
     def execute(self,context):
         global _jiggle_globals
         _jiggle_globals.jiggle_baking = True
+
+        bone_collections = context.object.data.collections
+        collection_visibility = {col.name: col.is_visible for col in bone_collections}
+        collection_solo = {col.name: col.is_solo for col in bone_collections}
+
         try:
             def push_nla():
                 if context.scene.jiggle.bake_overwrite: return
@@ -920,6 +925,11 @@ class ARMATURE_OT_JiggleBake(Operator):
             #preroll
             duration = context.scene.frame_end - context.scene.frame_start
             _jiggle_globals.is_preroll = False
+
+            for col in bone_collections:
+                col.is_solo = False
+                col.is_visible = True
+
             bpy.ops.pose.select_all(action='DESELECT')
             jiggle_select(context)
             jiggle_reset(context)
@@ -946,6 +956,9 @@ class ARMATURE_OT_JiggleBake(Operator):
             if not context.scene.jiggle.bake_overwrite:
                 context.object.animation_data.action.name = 'JiggleAction'
         finally:
+            for col in bone_collections:
+                col.is_solo = collection_solo[col.name]
+                col.is_visible = collection_visibility[col.name]
             _jiggle_globals.jiggle_baking = False
         return {'FINISHED'}  
 
