@@ -76,7 +76,7 @@ Without a position and rotation keyframe, Jiggle Physics doesn't know what the "
 
 ![keyframed parameters](https://github.com/user-attachments/assets/fcf91027-708a-4557-b556-9520892b5594)
 
-The jiggle parameters can be keyframed into animations and actions. There's a handy button to delete all jiggle parameter keys for all selected bones called "Clear Parameter Keyframes" which will attempt to delete them for you. If your keyframes are in an action, make sure that you're tweaking the action first!
+The jiggle parameters can be keyframed into animations and actions. There's a handy button to delete all jiggle parameter keys for all selected bones called *"Clear Parameter Keyframes"* which will attempt to delete them for you. If your keyframes are in an action, make sure that you're tweaking the action first!
 
 ### The pose doesn't quite match the simulation.
 
@@ -92,7 +92,7 @@ Try only jiggling deform bones!
 
 ### How do I set a bone to have a 90 degree rotation limit?
 
-That's the neat part, you don't! Instead you can set the Blend value to `0.5`, which will force the final pose to never be more than 90 degrees from the rest pose! Though with more effort it should be possible to find an Angle Elasticity and Length Elasticity that will exhibit the desired jiggle.
+That's the neat part, you don't! If you are having trouble with your bones moving too much with your desired *elasticity*, you can increase *elasticity* to limit the motion and use the *elasticity soften* parameter to soften motion near the target pose
 
 ### How do I collide with a flat surface?
 
