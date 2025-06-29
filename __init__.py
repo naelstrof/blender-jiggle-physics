@@ -1135,6 +1135,24 @@ class JIGGLE_PT_NoKeyframesWarning(JigglePanel,Panel):
         box.label(text=f'Position and rotation keyframes are used for the rest pose.')
         box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
 
+class JIGGLE_PT_FrameSkippingEnabledWarning(JigglePanel,Panel):
+    bl_label = ''
+    bl_parent_id = 'JIGGLE_PT_Settings'
+    bl_options = {'HEADER_LAYOUT_EXPAND'}
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable and context.scene.sync_mode == 'FRAME_DROP'
+    
+    def draw_header(self,context):
+        row=self.layout.row(align=True)
+        row.label(text='Frame Dropping Detected', icon='ERROR')
+    
+    def draw(self,context):
+        box = self.layout.box()
+        box.label(text=f'Playback set to Frame Dropping can cause the preview to be inaccurate.')
+        box.label(text=f'Bakes will look very different.')
+
 class JIGGLE_PT_MeshCollisionWarning(JigglePanel,Panel):
     bl_label = ''
     bl_parent_id = 'JIGGLE_PT_Settings'
@@ -1515,6 +1533,7 @@ def register():
     bpy.utils.register_class(JIGGLE_PT_ConnectedBonesWarning)
     bpy.utils.register_class(JIGGLE_PT_BoneConstraintsWarning)
     bpy.utils.register_class(JIGGLE_PT_MeshCollisionWarning)
+    bpy.utils.register_class(JIGGLE_PT_FrameSkippingEnabledWarning)
     bpy.utils.register_class(JIGGLE_PT_Utilities)
     bpy.utils.register_class(JIGGLE_PT_Bake)
     bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
@@ -1550,6 +1569,7 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_PT_ConnectedBonesWarning)
     bpy.utils.unregister_class(JIGGLE_PT_BoneConstraintsWarning)
     bpy.utils.unregister_class(JIGGLE_PT_MeshCollisionWarning)
+    bpy.utils.unregister_class(JIGGLE_PT_FrameSkippingEnabledWarning)
     bpy.utils.unregister_class(JIGGLE_PT_Utilities)
     bpy.utils.unregister_class(JIGGLE_PT_Bake)
     bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
