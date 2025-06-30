@@ -22,6 +22,7 @@ class JiggleGlobals:
     def __init__(self):
         self.is_rendering = False
         self.is_preroll = False
+        self.is_animation_playing = False
         self.profiler = cProfile.Profile()
         self.area_overlays = {}
         self.physics_resetting = False
@@ -186,7 +187,6 @@ class VirtualParticle:
             self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
         else:
             self.working_position = self.position + velocity * (1.0-self.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.jiggle_settings.friction) + gravity * self.jiggle_settings.gravity * dt2
-
 
     def mesh_collide(self, collider, depsgraph, position):
         collider_matrix = collider.matrix_world
@@ -641,9 +641,18 @@ def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
         particle.apply_pose()
         particle.write()
 
+@persistent
+def jiggle_playback_start(scene):
+    global _jiggle_globals
+    _jiggle_globals.is_animation_playing = True
+
+@persistent
+def jiggle_playback_end(scene):
+    global _jiggle_globals
+    _jiggle_globals.is_animation_playing = False
+
 @persistent                
 def jiggle_post(scene,depsgraph):
-
     global _jiggle_globals
     _jiggle_globals.clear_per_frame_caches()
     physics_resetting = _jiggle_globals.physics_resetting
@@ -656,7 +665,7 @@ def jiggle_post(scene,depsgraph):
     objects = scene.objects
     jiggle = scene.jiggle
 
-    if not jiggle.enable or is_rendering:
+    if not jiggle.enable or is_rendering or (not scene.jiggle.simulate_during_scrub and not _jiggle_globals.is_animation_playing and not _jiggle_globals.jiggle_baking):
         return
 
     if jiggle.debug: profiler.enable()
@@ -1257,6 +1266,7 @@ class JIGGLE_PT_Utilities(JigglePanel,Panel):
         col.operator(SCENE_OT_JiggleReset.bl_idname)
         if context.scene.jiggle.debug: col.operator('scene.jiggle_profile')
         layout.prop(context.scene.jiggle, 'loop')
+        layout.prop(context.scene.jiggle, 'simulate_during_scrub')
         
 class JIGGLE_PT_Bake(JigglePanel,Panel):
     bl_label = 'Bake Jiggle'
@@ -1389,6 +1399,12 @@ class JiggleScene(PropertyGroup):
     debug: BoolProperty(
         name = 'Enable debug',
         description = 'Enable profiling and debug features',
+        default = False,
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+    simulate_during_scrub: BoolProperty(
+        name = 'Simulate During Scrub',
+        description = 'Simulate jiggle physics while scrubbing the timeline',
         default = False,
         override={'LIBRARY_OVERRIDABLE'},
     )
@@ -1552,6 +1568,8 @@ def register():
     bpy.app.handlers.render_pre.append(jiggle_render_pre)
     bpy.app.handlers.render_post.append(jiggle_render_post)
     bpy.app.handlers.render_cancel.append(jiggle_render_cancel)
+    bpy.app.handlers.animation_playback_pre.append(jiggle_playback_start)
+    bpy.app.handlers.animation_playback_post.append(jiggle_playback_end)
 
 def unregister():
     bpy.utils.unregister_class(JiggleBone)
@@ -1587,6 +1605,8 @@ def unregister():
     bpy.app.handlers.render_pre.remove(jiggle_render_pre)
     bpy.app.handlers.render_post.remove(jiggle_render_post)
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
+    bpy.app.handlers.animation_playback_pre.remove(jiggle_playback_start)
+    bpy.app.handlers.animation_playback_post.remove(jiggle_playback_end)
 
     global _jiggle_globals
     _jiggle_globals.on_unregister()
