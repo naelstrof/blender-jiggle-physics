@@ -477,6 +477,10 @@ def update_pose_bone_jiggle_prop(self,context,prop):
     global _jiggle_globals
     if _jiggle_globals.propagating_props:
         return
+    if context.mode != 'POSE':
+        return
+    if context.selected_pose_bones is None:
+        return
     def keyframe(auto_key, b, prop):
         if auto_key and prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
             b.keyframe_insert(data_path=prop, index=-1)
@@ -546,6 +550,13 @@ def update_nested_jiggle_prop(self,context,prop):
     global _jiggle_globals
     if _jiggle_globals.propagating_props:
         return
+    if prop == 'enable':
+        self.id_data.jiggle.enable = True
+        mark_jiggle_tree(self.id_data)
+    if context.mode != 'POSE':
+        return
+    if context.selected_pose_bones is None:
+        return
     _jiggle_globals.propagating_props = True
     try:
         for b in context.selected_pose_bones:
@@ -554,9 +565,6 @@ def update_nested_jiggle_prop(self,context,prop):
             setattr(b.jiggle, prop, getattr(self,prop))
             if prop == 'enable':
                 reset_bone(b)
-        if prop == 'enable':
-            self.id_data.jiggle.enable = True
-            mark_jiggle_tree(self.id_data)
     finally:
         _jiggle_globals.propagating_props = False
 
