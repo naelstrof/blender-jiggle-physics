@@ -961,8 +961,14 @@ class ARMATURE_OT_JiggleBake(Operator):
                 virtual_particles = get_virtual_particles(context.scene)
                 jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
             #bake
-            bpy.ops.nla.bake(frame_start = context.scene.frame_start,
-                            frame_end = context.scene.frame_end,
+            if context.scene.use_preview_range:
+                frame_start = context.scene.frame_preview_start
+                frame_end = context.scene.frame_preview_end
+            else:
+                frame_start = context.scene.frame_start
+                frame_end = context.scene.frame_end
+            bpy.ops.nla.bake(frame_start = frame_start,
+                            frame_end = frame_end,
                             only_selected = True,
                             visual_keying = True,
                             use_current_action = context.scene.jiggle.bake_overwrite,
