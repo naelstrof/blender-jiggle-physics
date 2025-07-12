@@ -11,7 +11,7 @@ import bpy
 b = bpy.context.active_pose_bone
 
 b.jiggle_root_elasticity = 0.95
-b.jiggle_angle_elasticity = 0.55
+b.jiggle_angle_elasticity = 0.95
 b.jiggle_length_elasticity = 0.95
 b.jiggle_elasticity_soften = 0.0
 b.jiggle_gravity = 0.5
