@@ -922,7 +922,7 @@ def jiggle_render_post(scene):
 def jiggle_render_cancel(scene):
     global _jiggle_globals
     _jiggle_globals.is_rendering = False
-            
+
 class ARMATURE_OT_JiggleCopy(Operator):
     """Copy active jiggle settings to selected bones"""
     bl_idname = "armature.jiggle_copy"
@@ -1090,7 +1090,8 @@ class ARMATURE_OT_JiggleSelect(Operator):
     def execute(self,context):
         jiggle_select(context)
         return {'FINISHED'}
-    
+
+
 class ARMATURE_OT_JiggleBake(Operator):
     """Bake this object's visible jiggle bones to keyframes"""
     bl_idname = "armature.jiggle_bake"
@@ -1143,30 +1144,86 @@ class ARMATURE_OT_JiggleBake(Operator):
                 _jiggle_globals.is_preroll = True
                 virtual_particles = get_virtual_particles(context.scene)
                 jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
-            #bake
+            
+            #bake - OPTIMIZE THE SCENE FOR FASTER EVALUATION
             if context.scene.use_preview_range:
                 frame_start = context.scene.frame_preview_start
                 frame_end = context.scene.frame_preview_end
             else:
                 frame_start = context.scene.frame_start
                 frame_end = context.scene.frame_end
-            bpy.ops.nla.bake(frame_start = frame_start,
-                            frame_end = frame_end,
-                            only_selected = True,
-                            visual_keying = True,
-                            use_current_action = context.scene.jiggle.bake_overwrite,
-                            bake_types={'POSE'},
-                            channel_types={'LOCATION','ROTATION','SCALE'})
+            
+            # Store original states to restore later
+            hidden_objects = []
+            disabled_modifiers = []
+
+            # Get all collision objects that must remain functional
+            collision_objects = set()
+            for armature_obj in [o for o in context.scene.objects if o.type == 'ARMATURE']:
+                for bone in armature_obj.pose.bones:
+                    if hasattr(bone, 'jiggle') and bone.jiggle.enable:
+                        if bone.jiggle.collider_type == 'Object' and bone.jiggle.collider:
+                            collision_objects.add(bone.jiggle.collider)
+                        elif bone.jiggle.collider_type == 'Collection' and bone.jiggle.collider_collection:
+                            for coll_obj in bone.jiggle.collider_collection.objects:
+                                collision_objects.add(coll_obj)
+
+            # Aggressively optimize the scene
+            for obj in context.scene.objects:
+                # Keep armatures, empties, and collision objects visible
+                if obj.type in ['ARMATURE', 'EMPTY'] or obj in collision_objects:
+                    # But still disable expensive modifiers on collision objects
+                    if obj in collision_objects:
+                        for modifier in obj.modifiers:
+                            if modifier.type in ['NODES', 'SUBSURF', 'MULTIRES', 'FLUID', 'CLOTH', 'SOFT_BODY', 'OCEAN', 'DYNAMIC_PAINT']:
+                                if modifier.show_viewport:
+                                    disabled_modifiers.append((obj, modifier))
+                                    modifier.show_viewport = False
+                    continue
+                    
+                # For everything else: disable modifiers first, then hide
+                else:
+                    # Disable all modifiers on objects we're about to hide (just to be extra safe)
+                    for modifier in obj.modifiers:
+                        if modifier.show_viewport:
+                            disabled_modifiers.append((obj, modifier))
+                            modifier.show_viewport = False
+                    
+                    # Then hide the object
+                    if not obj.hide_viewport:
+                        hidden_objects.append(obj)
+                        obj.hide_viewport = True
+
+            try:
+                # Use the original NLA baking but with aggressively optimized scene
+                bpy.ops.nla.bake(frame_start = frame_start,
+                                frame_end = frame_end,
+                                only_selected = True,
+                                visual_keying = True,  # This is necessary for jiggle physics!
+                                use_current_action = context.scene.jiggle.bake_overwrite,
+                                bake_types={'POSE'},
+                                channel_types={'LOCATION','ROTATION','SCALE'})
+            finally:
+                # Restore scene state
+                for obj in hidden_objects:
+                    obj.hide_viewport = False
+                
+                for obj, modifier in disabled_modifiers:
+                    modifier.show_viewport = True
+            
             _jiggle_globals.is_preroll = False
             context.object.jiggle.freeze = True
+            
             if not context.scene.jiggle.bake_overwrite:
-                context.object.animation_data.action.name = 'JiggleAction'
+                if context.object.animation_data and context.object.animation_data.action:
+                    context.object.animation_data.action.name = 'JiggleAction'
+            
         finally:
             for col in bone_collections:
                 col.is_solo = collection_solo[col.name]
                 col.is_visible = collection_visibility[col.name]
             _jiggle_globals.jiggle_baking = False
-        return {'FINISHED'}  
+        return {'FINISHED'}
 
 class JigglePanel:
     bl_category = 'Animation'
