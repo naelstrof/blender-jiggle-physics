@@ -1246,7 +1246,7 @@ class ARMATURE_OT_JiggleBake(Operator):
     def poll(cls,context):
         return context.object and context.mode == 'POSE' and context.object.type == 'ARMATURE' and context.object.jiggle.enable and not context.object.jiggle.mute
     
-    # Modified ARMATURE_OT_JiggleBake.execute() method with debugging
+    # Modified ARMATURE_OT_JiggleBake.execute() method with debugging. This version applies optimizations earlier:
     def execute(self, context):
         global _jiggle_globals, _bake_debugger
         
@@ -1259,6 +1259,10 @@ class ARMATURE_OT_JiggleBake(Operator):
         bone_collections = context.object.data.collections
         collection_visibility = {col.name: col.is_visible for col in bone_collections}
         collection_solo = {col.name: col.is_solo for col in bone_collections}
+
+        # Store original states to restore later - MOVED UP EARLY
+        hidden_objects = []
+        disabled_modifiers = []
 
         try:
             def push_nla():
@@ -1280,43 +1284,8 @@ class ARMATURE_OT_JiggleBake(Operator):
                 active_modifiers = [mod for mod in obj.modifiers if mod.show_viewport]
                 if active_modifiers:
                     _bake_debugger.log(f"  {obj.name} ({obj.type}): {len(active_modifiers)} active modifiers")
-            
-            #preroll
-            duration = context.scene.frame_end - context.scene.frame_start
-            _jiggle_globals.is_preroll = False
 
-            for col in bone_collections:
-                col.is_solo = False
-                col.is_visible = True
-
-            bpy.ops.pose.select_all(action='DESELECT')
-            jiggle_select(context)
-            jiggle_reset(context)
-            if context.scene.jiggle.loop:
-                for preroll in reversed(range(context.scene.jiggle.preroll)):
-                    frame = context.scene.frame_end - (preroll%duration)
-                    context.scene.frame_set(frame)
-                    _jiggle_globals.is_preroll = True
-            else:
-                context.scene.frame_set(context.scene.frame_start)
-                _jiggle_globals.is_preroll = True
-                virtual_particles = get_virtual_particles(context.scene)
-                jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
-            
-            #bake 
-            if context.scene.use_preview_range:
-                frame_start = context.scene.frame_preview_start
-                frame_end = context.scene.frame_preview_end
-            else:
-                frame_start = context.scene.frame_start
-                frame_end = context.scene.frame_end
-            
-            _bake_debugger.log(f"Baking frames {frame_start} to {frame_end}")
-            
-            # Store original states to restore later
-            hidden_objects = []
-            disabled_modifiers = []
-
+            # APPLY OPTIMIZATIONS EARLY - BEFORE PREROLL!
             # Get all collision objects that must remain functional
             collision_objects = set()
             for armature_obj in [o for o in context.scene.objects if o.type == 'ARMATURE']:
@@ -1332,7 +1301,7 @@ class ARMATURE_OT_JiggleBake(Operator):
             for obj in collision_objects:
                 _bake_debugger.log(f"  Collision object: {obj.name} ({obj.type})")
 
-            # Aggressively optimize the scene
+            # Aggressively optimize the scene BEFORE preroll
             for obj in context.scene.objects:
                 # Keep armatures, empties, and collision objects visible
                 if obj.type in ['ARMATURE', 'EMPTY'] or obj in collision_objects:
@@ -1359,36 +1328,62 @@ class ARMATURE_OT_JiggleBake(Operator):
                         hidden_objects.append(obj)
                         obj.hide_viewport = True
 
-            # Log final scene state
+            # Log final scene state after early optimization
             final_visible_objects = [obj for obj in context.scene.objects if not obj.hide_viewport]
-            _bake_debugger.log(f"Visible objects after optimization: {len(final_visible_objects)}")
+            _bake_debugger.log(f"Visible objects after EARLY optimization: {len(final_visible_objects)}")
             _bake_debugger.log(f"Hidden objects: {len(hidden_objects)}")
             _bake_debugger.log(f"Disabled modifiers: {len(disabled_modifiers)}")
             
-            try:
-                _bake_debugger.log("Starting bpy.ops.nla.bake()...")
-                bake_start_time = time.time()
-                
-                # Use the original NLA baking but with aggressively optimized scene
-                bpy.ops.nla.bake(frame_start = frame_start,
-                                frame_end = frame_end,
-                                only_selected = True,
-                                visual_keying = True,  # This is necessary for jiggle physics!
-                                use_current_action = context.scene.jiggle.bake_overwrite,
-                                bake_types={'POSE'},
-                                channel_types={'LOCATION','ROTATION','SCALE'})
-                
-                bake_duration = time.time() - bake_start_time
-                _bake_debugger.log(f"bpy.ops.nla.bake() completed in {bake_duration:.3f}s")
-                
-            finally:
-                # Restore scene state
-                _bake_debugger.log("Restoring scene state...")
-                for obj in hidden_objects:
-                    obj.hide_viewport = False
-                
-                for obj, modifier in disabled_modifiers:
-                    modifier.show_viewport = True
+            # Now do preroll with optimized scene
+            duration = context.scene.frame_end - context.scene.frame_start
+            _jiggle_globals.is_preroll = False
+
+            for col in bone_collections:
+                col.is_solo = False
+                col.is_visible = True
+
+            bpy.ops.pose.select_all(action='DESELECT')
+            jiggle_select(context)
+            jiggle_reset(context)
+            
+            _bake_debugger.log("Starting preroll with optimized scene...")
+            if context.scene.jiggle.loop:
+                for preroll in reversed(range(context.scene.jiggle.preroll)):
+                    frame = context.scene.frame_end - (preroll%duration)
+                    context.scene.frame_set(frame)
+                    _jiggle_globals.is_preroll = True
+            else:
+                context.scene.frame_set(context.scene.frame_start)
+                _jiggle_globals.is_preroll = True
+                virtual_particles = get_virtual_particles(context.scene)
+                jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
+            
+            _bake_debugger.log("Preroll completed, starting actual bake...")
+            
+            #bake 
+            if context.scene.use_preview_range:
+                frame_start = context.scene.frame_preview_start
+                frame_end = context.scene.frame_preview_end
+            else:
+                frame_start = context.scene.frame_start
+                frame_end = context.scene.frame_end
+            
+            _bake_debugger.log(f"Baking frames {frame_start} to {frame_end}")
+            
+            _bake_debugger.log("Starting bpy.ops.nla.bake()...")
+            bake_start_time = time.time()
+            
+            # Use the original NLA baking with already-optimized scene
+            bpy.ops.nla.bake(frame_start = frame_start,
+                            frame_end = frame_end,
+                            only_selected = True,
+                            visual_keying = True,  # This is necessary for jiggle physics!
+                            use_current_action = context.scene.jiggle.bake_overwrite,
+                            bake_types={'POSE'},
+                            channel_types={'LOCATION','ROTATION','SCALE'})
+            
+            bake_duration = time.time() - bake_start_time
+            _bake_debugger.log(f"bpy.ops.nla.bake() completed in {bake_duration:.3f}s")
             
             _jiggle_globals.is_preroll = False
             context.object.jiggle.freeze = True
@@ -1398,6 +1393,14 @@ class ARMATURE_OT_JiggleBake(Operator):
                     context.object.animation_data.action.name = 'JiggleAction'
             
         finally:
+            # Restore scene state
+            _bake_debugger.log("Restoring scene state...")
+            for obj in hidden_objects:
+                obj.hide_viewport = False
+            
+            for obj, modifier in disabled_modifiers:
+                modifier.show_viewport = True
+                
             for col in bone_collections:
                 col.is_solo = collection_solo[col.name]
                 col.is_visible = collection_visibility[col.name]
@@ -1409,6 +1412,7 @@ class ARMATURE_OT_JiggleBake(Operator):
             _bake_debugger.log(f"Debug report saved to text block: {text_block.name}")
         
         return {'FINISHED'}
+
 
 class JigglePanel:
     bl_category = 'Animation'
