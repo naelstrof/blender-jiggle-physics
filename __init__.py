@@ -7,6 +7,150 @@ from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
 
+# For debugging the NLA Bake operation
+import time
+from bpy.app.handlers import persistent
+
+class BakeDebugger:
+    def __init__(self):
+        self.log_entries = []
+        self.start_time = None
+        self.frame_times = {}
+        self.object_evaluations = {}
+        self.modifier_evaluations = {}
+        
+    def start_logging(self):
+        self.log_entries = []
+        self.start_time = time.time()
+        self.frame_times = {}
+        self.object_evaluations = {}
+        self.modifier_evaluations = {}
+        self.log("=== STARTING NLA BAKE DEBUG SESSION ===")
+        
+    def log(self, message):
+        timestamp = time.time() - self.start_time if self.start_time else 0
+        entry = f"[{timestamp:.3f}s] {message}"
+        self.log_entries.append(entry)
+        print(entry)  # Also print to console
+        
+    def log_frame_start(self, frame):
+        self.frame_start_time = time.time()
+        self.log(f"--- FRAME {frame} START ---")
+        
+    def log_frame_end(self, frame):
+        frame_duration = time.time() - self.frame_start_time
+        self.frame_times[frame] = frame_duration
+        self.log(f"--- FRAME {frame} END ({frame_duration:.3f}s) ---")
+        
+    def log_object_evaluation(self, obj_name, obj_type):
+        if obj_name not in self.object_evaluations:
+            self.object_evaluations[obj_name] = 0
+        self.object_evaluations[obj_name] += 1
+        self.log(f"EVALUATING OBJECT: {obj_name} ({obj_type})")
+        
+    def log_modifier_evaluation(self, obj_name, mod_name, mod_type):
+        key = f"{obj_name}.{mod_name}"
+        if key not in self.modifier_evaluations:
+            self.modifier_evaluations[key] = 0
+        self.modifier_evaluations[key] += 1
+        self.log(f"EVALUATING MODIFIER: {obj_name}.{mod_name} ({mod_type})")
+        
+    def generate_report(self):
+        total_time = time.time() - self.start_time if self.start_time else 0
+        
+        report = []
+        report.append("=== NLA BAKE PERFORMANCE REPORT ===")
+        report.append(f"Total bake time: {total_time:.3f}s")
+        report.append("")
+        
+        # Frame timing analysis
+        if self.frame_times:
+            report.append("FRAME TIMING:")
+            avg_frame_time = sum(self.frame_times.values()) / len(self.frame_times)
+            slowest_frame = max(self.frame_times.items(), key=lambda x: x[1])
+            fastest_frame = min(self.frame_times.items(), key=lambda x: x[1])
+            
+            report.append(f"  Average frame time: {avg_frame_time:.3f}s")
+            report.append(f"  Slowest frame: {slowest_frame[0]} ({slowest_frame[1]:.3f}s)")
+            report.append(f"  Fastest frame: {fastest_frame[0]} ({fastest_frame[1]:.3f}s)")
+            report.append("")
+        
+        # Object evaluation analysis
+        if self.object_evaluations:
+            report.append("MOST EVALUATED OBJECTS:")
+            sorted_objects = sorted(self.object_evaluations.items(), key=lambda x: x[1], reverse=True)
+            for obj_name, count in sorted_objects[:20]:  # Top 20
+                report.append(f"  {obj_name}: {count} evaluations")
+            report.append("")
+        
+        # Modifier evaluation analysis
+        if self.modifier_evaluations:
+            report.append("MOST EVALUATED MODIFIERS:")
+            sorted_modifiers = sorted(self.modifier_evaluations.items(), key=lambda x: x[1], reverse=True)
+            for mod_key, count in sorted_modifiers[:20]:  # Top 20
+                report.append(f"  {mod_key}: {count} evaluations")
+            report.append("")
+        
+        # Full log
+        report.append("FULL LOG:")
+        report.extend(self.log_entries)
+        
+        return "\n".join(report)
+    
+    def save_to_text_block(self, name="NLA_Bake_Debug_Log"):
+        report = self.generate_report()
+        
+        # Create or update text block in Blender
+        if name in bpy.data.texts:
+            text_block = bpy.data.texts[name]
+            text_block.clear()
+        else:
+            text_block = bpy.data.texts.new(name)
+        
+        text_block.write(report)
+        return text_block
+
+# Global debugger instance
+_bake_debugger = BakeDebugger()
+
+# Monkey patch some Blender functions to intercept evaluations
+original_object_update = None
+original_modifier_update = None
+
+def debug_object_update(self, context, depsgraph):
+    """Intercept object updates during baking"""
+    if _jiggle_globals.jiggle_baking:
+        _bake_debugger.log_object_evaluation(self.name, self.type)
+    
+    if original_object_update:
+        return original_object_update(self, context, depsgraph)
+
+@persistent
+def debug_frame_change_pre(scene, depsgraph):
+    """Log when frame changes during baking"""
+    if _jiggle_globals.jiggle_baking:
+        _bake_debugger.log_frame_start(scene.frame_current)
+
+@persistent  
+def debug_frame_change_post(scene, depsgraph):
+    """Log when frame processing completes during baking"""
+    if _jiggle_globals.jiggle_baking:
+        _bake_debugger.log_frame_end(scene.frame_current)
+        
+        # Log which objects were evaluated this frame
+        for obj in scene.objects:
+            # Check if object was recently evaluated by looking at its dependency graph
+            if hasattr(depsgraph, 'object_instances'):
+                for instance in depsgraph.object_instances:
+                    if instance.object == obj:
+                        _bake_debugger.log_object_evaluation(obj.name, obj.type)
+                        
+                        # Log modifiers on this object
+                        for modifier in obj.modifiers:
+                            if modifier.show_viewport:
+                                _bake_debugger.log_modifier_evaluation(obj.name, modifier.name, modifier.type)
+
+
 ZERO_VEC = Vector((0,0,0))
 IDENTITY_MAT = Matrix.Identity(4)
 IDENTITY_QUAT = Quaternion()
@@ -919,8 +1063,14 @@ class ARMATURE_OT_JiggleBake(Operator):
     def poll(cls,context):
         return context.object and context.mode == 'POSE' and context.object.type == 'ARMATURE' and context.object.jiggle.enable and not context.object.jiggle.mute
     
-    def execute(self,context):
-        global _jiggle_globals
+    # Modified ARMATURE_OT_JiggleBake.execute() method with debugging
+    def execute(self, context):
+        global _jiggle_globals, _bake_debugger
+        
+        # Start debug logging
+        _bake_debugger.start_logging()
+        _bake_debugger.log(f"Starting bake for object: {context.object.name}")
+        
         _jiggle_globals.jiggle_baking = True
 
         bone_collections = context.object.data.collections
@@ -939,6 +1089,14 @@ class ARMATURE_OT_JiggleBake(Operator):
                 track.strips.new(action.name, int(action.frame_range[0]), action)
                 
             push_nla()
+            
+            # Log scene state before optimization
+            visible_objects = [obj for obj in context.scene.objects if not obj.hide_viewport]
+            _bake_debugger.log(f"Visible objects before optimization: {len(visible_objects)}")
+            for obj in visible_objects:
+                active_modifiers = [mod for mod in obj.modifiers if mod.show_viewport]
+                if active_modifiers:
+                    _bake_debugger.log(f"  {obj.name} ({obj.type}): {len(active_modifiers)} active modifiers")
             
             #preroll
             duration = context.scene.frame_end - context.scene.frame_start
@@ -962,13 +1120,15 @@ class ARMATURE_OT_JiggleBake(Operator):
                 virtual_particles = get_virtual_particles(context.scene)
                 jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
             
-            #bake - OPTIMIZE THE SCENE FOR FASTER EVALUATION
+            #bake 
             if context.scene.use_preview_range:
                 frame_start = context.scene.frame_preview_start
                 frame_end = context.scene.frame_preview_end
             else:
                 frame_start = context.scene.frame_start
                 frame_end = context.scene.frame_end
+            
+            _bake_debugger.log(f"Baking frames {frame_start} to {frame_end}")
             
             # Store original states to restore later
             hidden_objects = []
@@ -985,6 +1145,10 @@ class ARMATURE_OT_JiggleBake(Operator):
                             for coll_obj in bone.jiggle.collider_collection.objects:
                                 collision_objects.add(coll_obj)
 
+            _bake_debugger.log(f"Found {len(collision_objects)} collision objects")
+            for obj in collision_objects:
+                _bake_debugger.log(f"  Collision object: {obj.name} ({obj.type})")
+
             # Aggressively optimize the scene
             for obj in context.scene.objects:
                 # Keep armatures, empties, and collision objects visible
@@ -994,13 +1158,14 @@ class ARMATURE_OT_JiggleBake(Operator):
                         for modifier in obj.modifiers:
                             if modifier.type in ['NODES', 'SUBSURF', 'MULTIRES', 'FLUID', 'CLOTH', 'SOFT_BODY', 'OCEAN', 'DYNAMIC_PAINT']:
                                 if modifier.show_viewport:
+                                    _bake_debugger.log(f"Disabling modifier {modifier.name} on collision object {obj.name}")
                                     disabled_modifiers.append((obj, modifier))
                                     modifier.show_viewport = False
                     continue
                     
                 # For everything else: disable modifiers first, then hide
                 else:
-                    # Disable all modifiers on objects we're about to hide (just to be extra safe)
+                    # Disable all modifiers on objects we're about to hide
                     for modifier in obj.modifiers:
                         if modifier.show_viewport:
                             disabled_modifiers.append((obj, modifier))
@@ -1011,7 +1176,16 @@ class ARMATURE_OT_JiggleBake(Operator):
                         hidden_objects.append(obj)
                         obj.hide_viewport = True
 
+            # Log final scene state
+            final_visible_objects = [obj for obj in context.scene.objects if not obj.hide_viewport]
+            _bake_debugger.log(f"Visible objects after optimization: {len(final_visible_objects)}")
+            _bake_debugger.log(f"Hidden objects: {len(hidden_objects)}")
+            _bake_debugger.log(f"Disabled modifiers: {len(disabled_modifiers)}")
+            
             try:
+                _bake_debugger.log("Starting bpy.ops.nla.bake()...")
+                bake_start_time = time.time()
+                
                 # Use the original NLA baking but with aggressively optimized scene
                 bpy.ops.nla.bake(frame_start = frame_start,
                                 frame_end = frame_end,
@@ -1020,8 +1194,13 @@ class ARMATURE_OT_JiggleBake(Operator):
                                 use_current_action = context.scene.jiggle.bake_overwrite,
                                 bake_types={'POSE'},
                                 channel_types={'LOCATION','ROTATION','SCALE'})
+                
+                bake_duration = time.time() - bake_start_time
+                _bake_debugger.log(f"bpy.ops.nla.bake() completed in {bake_duration:.3f}s")
+                
             finally:
                 # Restore scene state
+                _bake_debugger.log("Restoring scene state...")
                 for obj in hidden_objects:
                     obj.hide_viewport = False
                 
@@ -1040,6 +1219,12 @@ class ARMATURE_OT_JiggleBake(Operator):
                 col.is_solo = collection_solo[col.name]
                 col.is_visible = collection_visibility[col.name]
             _jiggle_globals.jiggle_baking = False
+            
+            # Generate and save debug report
+            _bake_debugger.log("=== BAKE COMPLETE ===")
+            text_block = _bake_debugger.save_to_text_block()
+            _bake_debugger.log(f"Debug report saved to text block: {text_block.name}")
+        
         return {'FINISHED'}
 
 class JigglePanel:
@@ -1642,6 +1827,10 @@ def register():
     bpy.app.handlers.animation_playback_pre.append(jiggle_playback_start)
     bpy.app.handlers.animation_playback_post.append(jiggle_playback_end)
 
+    # Debugging for NLA Bake
+    bpy.app.handlers.frame_change_pre.append(debug_frame_change_pre)
+    bpy.app.handlers.frame_change_post.append(debug_frame_change_post)
+
 def unregister():
     bpy.utils.unregister_class(JiggleBone)
     bpy.utils.unregister_class(JiggleObject)
@@ -1678,6 +1867,10 @@ def unregister():
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
     bpy.app.handlers.animation_playback_pre.remove(jiggle_playback_start)
     bpy.app.handlers.animation_playback_post.remove(jiggle_playback_end)
+
+    # Debugging for NLA Bake
+    bpy.app.handlers.frame_change_pre.remove(debug_frame_change_pre)
+    bpy.app.handlers.frame_change_post.remove(debug_frame_change_post)
 
     global _jiggle_globals
     _jiggle_globals.on_unregister()
