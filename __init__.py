@@ -13,6 +13,160 @@ IDENTITY_QUAT = Quaternion()
 # We merge bones that are closer than this as bones perfectly on top of each other don't work well with jiggle physics.
 MERGE_BONE_THRESHOLD = 0.01
 
+# Simple 3D/4D noise function for wind turbulence
+def noise_hash(x, y, z, w=0):
+    """Simple hash function for noise generation"""
+    import math
+    n = math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + w * 17.389) * 43758.5453
+    return n - math.floor(n)
+
+def smooth_step(t):
+    """Smoothstep interpolation function"""
+    return t * t * (3.0 - 2.0 * t)
+
+def noise_3d(x, y, z):
+    """Simple 3D noise function (Perlin-like)"""
+    import math
+
+    # Get integer and fractional parts
+    xi = math.floor(x)
+    yi = math.floor(y)
+    zi = math.floor(z)
+
+    xf = x - xi
+    yf = y - yi
+    zf = z - zi
+
+    # Smooth the fractional parts
+    u = smooth_step(xf)
+    v = smooth_step(yf)
+    w = smooth_step(zf)
+
+    # Hash coordinates of the 8 cube corners
+    n000 = noise_hash(xi, yi, zi)
+    n100 = noise_hash(xi + 1, yi, zi)
+    n010 = noise_hash(xi, yi + 1, zi)
+    n110 = noise_hash(xi + 1, yi + 1, zi)
+    n001 = noise_hash(xi, yi, zi + 1)
+    n101 = noise_hash(xi + 1, yi, zi + 1)
+    n011 = noise_hash(xi, yi + 1, zi + 1)
+    n111 = noise_hash(xi + 1, yi + 1, zi + 1)
+
+    # Trilinear interpolation
+    x00 = n000 * (1 - u) + n100 * u
+    x10 = n010 * (1 - u) + n110 * u
+    x01 = n001 * (1 - u) + n101 * u
+    x11 = n011 * (1 - u) + n111 * u
+
+    y0 = x00 * (1 - v) + x10 * v
+    y1 = x01 * (1 - v) + x11 * v
+
+    return y0 * (1 - w) + y1 * w
+
+def noise_4d(x, y, z, w):
+    """Simple 4D noise function (Perlin-like)"""
+    import math
+
+    # Get integer and fractional parts
+    xi = math.floor(x)
+    yi = math.floor(y)
+    zi = math.floor(z)
+    wi = math.floor(w)
+
+    xf = x - xi
+    yf = y - yi
+    zf = z - zi
+    wf = w - wi
+
+    # Smooth the fractional parts
+    u = smooth_step(xf)
+    v = smooth_step(yf)
+    s = smooth_step(zf)
+    t = smooth_step(wf)
+
+    # Hash coordinates of the 16 hypercube corners
+    n0000 = noise_hash(xi, yi, zi, wi)
+    n1000 = noise_hash(xi + 1, yi, zi, wi)
+    n0100 = noise_hash(xi, yi + 1, zi, wi)
+    n1100 = noise_hash(xi + 1, yi + 1, zi, wi)
+    n0010 = noise_hash(xi, yi, zi + 1, wi)
+    n1010 = noise_hash(xi + 1, yi, zi + 1, wi)
+    n0110 = noise_hash(xi, yi + 1, zi + 1, wi)
+    n1110 = noise_hash(xi + 1, yi + 1, zi + 1, wi)
+
+    n0001 = noise_hash(xi, yi, zi, wi + 1)
+    n1001 = noise_hash(xi + 1, yi, zi, wi + 1)
+    n0101 = noise_hash(xi, yi + 1, zi, wi + 1)
+    n1101 = noise_hash(xi + 1, yi + 1, zi, wi + 1)
+    n0011 = noise_hash(xi, yi, zi + 1, wi + 1)
+    n1011 = noise_hash(xi + 1, yi, zi + 1, wi + 1)
+    n0111 = noise_hash(xi, yi + 1, zi + 1, wi + 1)
+    n1111 = noise_hash(xi + 1, yi + 1, zi + 1, wi + 1)
+
+    # 4D interpolation
+    x000 = n0000 * (1 - u) + n1000 * u
+    x100 = n0100 * (1 - u) + n1100 * u
+    x010 = n0010 * (1 - u) + n1010 * u
+    x110 = n0110 * (1 - u) + n1110 * u
+
+    x001 = n0001 * (1 - u) + n1001 * u
+    x101 = n0101 * (1 - u) + n1101 * u
+    x011 = n0011 * (1 - u) + n1011 * u
+    x111 = n0111 * (1 - u) + n1111 * u
+
+    y00 = x000 * (1 - v) + x100 * v
+    y10 = x010 * (1 - v) + x110 * v
+    y01 = x001 * (1 - v) + x101 * v
+    y11 = x011 * (1 - v) + x111 * v
+
+    z0 = y00 * (1 - s) + y10 * s
+    z1 = y01 * (1 - s) + y11 * s
+
+    return z0 * (1 - t) + z1 * t
+
+def get_wind_force(position, wind_direction, wind_speed, turbulence_scale, evolution):
+    """Calculate wind force at a given world position using 3D/4D noise"""
+    if turbulence_scale <= 0:
+        return wind_direction * wind_speed
+
+    # Sample position in noise field (scaled by turbulence)
+    sample_pos = position / turbulence_scale
+
+    # Offset sample position by wind direction and speed (creates flowing effect)
+    offset = wind_direction * wind_speed * evolution
+    sample_x = sample_pos.x + offset.x
+    sample_y = sample_pos.y + offset.y
+    sample_z = sample_pos.z + offset.z
+
+    # Use 4D noise if evolution speed is non-zero, otherwise 3D
+    if evolution > 0:
+        noise_val = noise_4d(sample_x, sample_y, sample_z, evolution)
+    else:
+        noise_val = noise_3d(sample_x, sample_y, sample_z)
+
+    # Convert noise from [0,1] to [-1,1] range for turbulence
+    turbulence = (noise_val * 2.0 - 1.0)
+
+    # Create turbulent wind direction
+    # Add perpendicular components for swirling effect
+    up = Vector((0, 0, 1))
+    if abs(wind_direction.dot(up)) > 0.99:
+        up = Vector((1, 0, 0))
+
+    perp1 = wind_direction.cross(up).normalized()
+    perp2 = wind_direction.cross(perp1).normalized()
+
+    # Sample noise for each perpendicular direction
+    turb_x = noise_3d(sample_x + 100, sample_y, sample_z) * 2.0 - 1.0
+    turb_y = noise_3d(sample_x, sample_y + 100, sample_z) * 2.0 - 1.0
+
+    # Combine base wind direction with turbulence
+    wind_force = wind_direction * wind_speed * (1.0 + turbulence * 0.5)
+    wind_force += perp1 * turb_x * wind_speed * 0.3
+    wind_force += perp2 * turb_y * wind_speed * 0.3
+
+    return wind_force
+
 class AreaProperties:
     def __init__(self):
         self.overlay_pose = False
@@ -177,16 +331,16 @@ class VirtualParticle:
                 self.bone.jiggle.position_last2 = self.position_last
                 self.bone.jiggle.rest_pose_position2 = self.rest_pose_position
 
-    def verlet_integrate(self, dt2, gravity):
+    def verlet_integrate(self, dt2, gravity, wind_force=ZERO_VEC):
         if not self.parent:
             return
         delta = self.position - self.position_last
         local_space_velocity = delta - (self.parent.position - self.parent.position_last)
         velocity = delta - local_space_velocity
         if self.parent.parent:
-            self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2
+            self.working_position = self.position + velocity * (1.0-self.parent.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.parent.jiggle_settings.friction) + gravity * self.parent.jiggle_settings.gravity * dt2 + wind_force * dt2
         else:
-            self.working_position = self.position + velocity * (1.0-self.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.jiggle_settings.friction) + gravity * self.jiggle_settings.gravity * dt2
+            self.working_position = self.position + velocity * (1.0-self.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.jiggle_settings.friction) + gravity * self.jiggle_settings.gravity * dt2 + wind_force * dt2
 
     def mesh_collide(self, collider, depsgraph, position):
         collider_matrix = collider.matrix_world
@@ -638,9 +792,26 @@ def draw_callback():
 def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
     dt = 1.0 / scene.render.fps
     dt2 = dt*dt
-    for _ in range(framecount):
+
+    # Get wind settings
+    wind_enabled = scene.jiggle.enable_wind
+    wind_direction = Vector(scene.jiggle.wind_direction).normalized() if scene.jiggle.wind_direction.length > 0 else Vector((1, 0, 0))
+    wind_speed = scene.jiggle.wind_speed
+    turbulence_scale = scene.jiggle.wind_turbulence_scale
+    evolution_speed = scene.jiggle.wind_evolution_speed
+
+    for frame_step in range(framecount):
+        # Calculate evolution value for 4D noise (changes over time)
+        evolution = (scene.frame_current + frame_step) * evolution_speed if evolution_speed > 0 else 0
+
         for particle in virtual_particles:
-            particle.verlet_integrate(dt2, scene.gravity)
+            # Calculate wind force at particle position
+            if wind_enabled and wind_speed > 0:
+                wind_force = get_wind_force(particle.position, wind_direction, wind_speed, turbulence_scale, evolution)
+            else:
+                wind_force = ZERO_VEC
+
+            particle.verlet_integrate(dt2, scene.gravity, wind_force)
         for particle in virtual_particles:
             particle.constrain(depsgraph)
         for particle in virtual_particles:
@@ -1264,11 +1435,11 @@ class JIGGLE_PT_Utilities(JigglePanel,Panel):
     bl_label = 'Global Jiggle Utilities'
     bl_parent_id = 'JIGGLE_PT_Settings'
     bl_options = {"DEFAULT_CLOSED"}
-    
+
     @classmethod
     def poll(cls,context):
         return context.scene.jiggle.enable
-    
+
     def draw(self,context):
         layout = self.layout
         layout.use_property_split=True
@@ -1281,6 +1452,33 @@ class JIGGLE_PT_Utilities(JigglePanel,Panel):
         if context.scene.jiggle.debug: col.operator('scene.jiggle_profile')
         layout.prop(context.scene.jiggle, 'loop')
         layout.prop(context.scene.jiggle, 'simulate_during_scrub')
+
+class JIGGLE_PT_Wind(JigglePanel,Panel):
+    bl_label = 'Wind Force'
+    bl_parent_id = 'JIGGLE_PT_Utilities'
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene.jiggle.enable
+
+    def draw_header(self,context):
+        self.layout.prop(context.scene.jiggle, 'enable_wind', text='')
+
+    def draw(self,context):
+        layout = self.layout
+        layout.use_property_split=True
+        layout.use_property_decorate=False
+
+        jiggle = context.scene.jiggle
+        layout.enabled = jiggle.enable_wind
+
+        col = layout.column(align=True)
+        col.prop(jiggle, 'wind_direction')
+        col.prop(jiggle, 'wind_speed')
+        col.separator()
+        col.prop(jiggle, 'wind_turbulence_scale')
+        col.prop(jiggle, 'wind_evolution_speed')
         
 class JIGGLE_PT_Bake(JigglePanel,Panel):
     bl_label = 'Bake Jiggle'
@@ -1403,7 +1601,7 @@ class JiggleScene(PropertyGroup):
     loop: BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=False)
     preroll: IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=30)
     bake_overwrite: BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
-    bake_nla: BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
+    bake_nla: BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False)
     enable: BoolProperty(
         name = 'Enable Scene',
         description = 'Enable jiggle on this scene',
@@ -1420,6 +1618,45 @@ class JiggleScene(PropertyGroup):
         name = 'Simulate During Scrub',
         description = 'Simulate jiggle physics while scrubbing the timeline',
         default = False,
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+
+    # Wind settings
+    enable_wind: BoolProperty(
+        name = 'Enable Wind',
+        description = 'Enable wind force affecting jiggle physics',
+        default = False,
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+    wind_direction: FloatVectorProperty(
+        name = 'Wind Direction',
+        description = 'Direction of the wind in world space',
+        default = (1.0, 0.0, 0.0),
+        subtype = 'DIRECTION',
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+    wind_speed: FloatProperty(
+        name = 'Wind Speed',
+        description = 'Base speed/strength of the wind',
+        default = 0.5,
+        min = 0.0,
+        soft_max = 10.0,
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+    wind_turbulence_scale: FloatProperty(
+        name = 'Turbulence Scale',
+        description = 'Scale of the wind turbulence noise field (larger = smoother, more gradual changes)',
+        default = 2.0,
+        min = 0.1,
+        soft_max = 10.0,
+        override={'LIBRARY_OVERRIDABLE'},
+    )
+    wind_evolution_speed: FloatProperty(
+        name = 'Evolution Speed',
+        description = 'Speed at which the wind pattern evolves over time (4D noise)',
+        default = 0.1,
+        min = 0.0,
+        soft_max = 1.0,
         override={'LIBRARY_OVERRIDABLE'},
     )
 
@@ -1565,6 +1802,7 @@ def register():
     bpy.utils.register_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.register_class(JIGGLE_PT_FrameSkippingEnabledWarning)
     bpy.utils.register_class(JIGGLE_PT_Utilities)
+    bpy.utils.register_class(JIGGLE_PT_Wind)
     bpy.utils.register_class(JIGGLE_PT_Bake)
     bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.register_class(JIGGLE_OT_bone_constraints_disable)
@@ -1603,6 +1841,7 @@ def unregister():
     bpy.utils.unregister_class(JIGGLE_PT_MeshCollisionWarning)
     bpy.utils.unregister_class(JIGGLE_PT_FrameSkippingEnabledWarning)
     bpy.utils.unregister_class(JIGGLE_PT_Utilities)
+    bpy.utils.unregister_class(JIGGLE_PT_Wind)
     bpy.utils.unregister_class(JIGGLE_PT_Bake)
     bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
     bpy.utils.unregister_class(JIGGLE_OT_bone_constraints_disable)
