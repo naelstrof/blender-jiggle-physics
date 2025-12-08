@@ -1224,8 +1224,12 @@ class JIGGLE_OT_bone_connected_disable(Operator):
         previous_mode = obj.mode
         bpy.ops.object.mode_set(mode='EDIT')
         for pose_bone in obj.pose.bones:
-            if not pose_bone.bone.select:
-                continue
+            if bpy.app.version < (5, 0, 0):
+                if not pose_bone.bone.select:
+                    continue
+            else:
+                if not pose_bone.select:
+                    continue
             edit_bone = obj.data.edit_bones.get(pose_bone.name)
             if edit_bone is None:
                 continue
@@ -1248,8 +1252,12 @@ class JIGGLE_OT_bone_constraints_disable(Operator):
     def execute(self, context):
         obj = context.object
         for pose_bone in obj.pose.bones:
-            if not pose_bone.bone.select:
-                continue
+            if bpy.app.version < (5, 0, 0):
+                if not pose_bone.bone.select:
+                    continue
+            else:
+                if not pose_bone.select:
+                    continue
             for constraint in pose_bone.constraints:
                 constraint.enabled = False
         return {'FINISHED'}
