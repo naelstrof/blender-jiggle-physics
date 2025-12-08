@@ -1036,7 +1036,10 @@ def jiggle_select(context):
     for ob in jiggle_objs:
         jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone.jiggle, 'enable', False)]
         for bone in jiggle_bones:
-            bone.bone.select = True
+            if bpy.app.version < (5, 0, 0):
+                bone.bone.select = True
+            else:
+                bone.select = True
     
 class ARMATURE_OT_JiggleSelect(Operator):
     """Select jiggle bones on selected objects in pose mode"""
