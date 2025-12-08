@@ -604,9 +604,18 @@ def is_bone_animated(armature, bone_name):
     anim_data = armature.animation_data
     if not anim_data or not anim_data.action:
         return False
-    for fcurve in anim_data.action.fcurves:
-        if f'pose.bones["{bone_name}"]' in fcurve.data_path:
-            return True
+    if bpy.app.version < (5, 0, 0):
+        for fcurve in anim_data.action.fcurves:
+            if f'pose.bones["{bone_name}"]' in fcurve.data_path:
+                return True
+    else:
+        for slot in anim_data.action.slots:
+            channelbag = anim_utils.action_get_channelbag_for_slot(anim_data.action, slot)
+            if not channelbag:
+                continue
+            for fcurve in channelbag.fcurves:
+                if f'pose.bones["{bone_name}"]' in fcurve.data_path:
+                    return True
     return False
 
 def reset_bone(b):
