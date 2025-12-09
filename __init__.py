@@ -6,6 +6,7 @@ from bl_ui.utils import PresetPanel
 from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
+from bpy_extras import anim_utils
 
 # For debugging the NLA Bake operation
 import time
@@ -1930,7 +1931,7 @@ class JiggleScene(PropertyGroup):
         name = 'Turbulence Scale',
         description = 'Scale of the wind turbulence noise field (larger = smoother, more gradual changes)',
         default = 2.0,
-        min = 0.1,
+        min = 0,
         soft_max = 10.0,
         override={'LIBRARY_OVERRIDABLE'},
     )
