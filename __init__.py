@@ -1002,20 +1002,21 @@ def update_nested_jiggle_prop(self,context,prop):
     global _jiggle_globals
     if _jiggle_globals.propagating_props:
         return
-    if prop == 'enable':
-        self.id_data.jiggle.enable = True
-        mark_jiggle_tree(self.id_data)
-    if context.mode != 'POSE':
-        return
-    if context.selected_pose_bones is None:
-        return
     _jiggle_globals.propagating_props = True
     try:
+        if context.mode != 'POSE':
+            return
+        if context.selected_pose_bones is None:
+            return
+        if prop == 'enable':
+            self.id_data.jiggle.enable = True
         for b in context.selected_pose_bones:
             if getattr(b.jiggle,prop) == getattr(self,prop):
                 continue
             setattr(b.jiggle, prop, getattr(self,prop))
-            if prop == 'enable':
+        if prop == 'enable':
+            mark_jiggle_tree(self.id_data)
+            for b in context.selected_pose_bones:
                 reset_bone(b)
     finally:
         _jiggle_globals.propagating_props = False
@@ -1064,7 +1065,7 @@ def draw_callback():
     verts = []
     rest_pose_overlay_verts = []
     for particle in virtual_particles:
-        if particle.parent:
+        if particle.parent and particle.bone:
             rest_pose_overlay_verts.append(particle.parent.rest_pose_position)
             rest_pose_overlay_verts.append(particle.rest_pose_position)
             verts.append(particle.parent.position)
