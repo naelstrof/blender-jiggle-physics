@@ -603,7 +603,7 @@ class VirtualParticle:
         self.desired_length_to_parent = max((self.pose - self.parent_pose).length, MERGE_BONE_THRESHOLD)
 
     def set_child(self, child):
-        self.children.append(child)
+        child not in self.children and self.children.append(child)
 
     def write(self):
         match self.particleType:
@@ -634,14 +634,14 @@ class VirtualParticle:
     def mesh_collide(self, collider, depsgraph, position):
         collider_matrix = collider.matrix_world
         local_working_position = collider_matrix.inverted() @ position
-        result, local_location, local_normal, _ = collider.closest_point_on_mesh(local_working_position, depsgraph=depsgraph)
+        local_radius = self.parent.jiggle_settings.collision_radius
+        result, local_location, local_normal, _ = collider.closest_point_on_mesh(local_working_position, distance=local_radius, depsgraph=depsgraph)
         if not result:
             return position
         location = collider_matrix @ local_location
         normal = collider_matrix.to_quaternion() @ local_normal
         diff = position-location
 
-        local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
