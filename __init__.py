@@ -7,11 +7,9 @@ from mathutils import Vector, Matrix, Euler, Quaternion, geometry
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import anim_utils
+import time
 
 # For debugging the NLA Bake operation
-import time
-from bpy.app.handlers import persistent
-
 class BakeDebugger:
     def __init__(self):
         self.log_entries = []
@@ -32,7 +30,7 @@ class BakeDebugger:
         timestamp = time.time() - self.start_time if self.start_time else 0
         entry = f"[{timestamp:.3f}s] {message}"
         self.log_entries.append(entry)
-        print(entry)  # Also print to console
+        print(entry)
         
     def log_frame_start(self, frame):
         self.frame_start_time = time.time()
@@ -64,7 +62,6 @@ class BakeDebugger:
         report.append(f"Total bake time: {total_time:.3f}s")
         report.append("")
         
-        # Frame timing analysis
         if self.frame_times:
             report.append("FRAME TIMING:")
             avg_frame_time = sum(self.frame_times.values()) / len(self.frame_times)
@@ -76,262 +73,80 @@ class BakeDebugger:
             report.append(f"  Fastest frame: {fastest_frame[0]} ({fastest_frame[1]:.3f}s)")
             report.append("")
         
-        # Object evaluation analysis
         if self.object_evaluations:
             report.append("MOST EVALUATED OBJECTS:")
             sorted_objects = sorted(self.object_evaluations.items(), key=lambda x: x[1], reverse=True)
-            for obj_name, count in sorted_objects[:20]:  # Top 20
+            for obj_name, count in sorted_objects[:20]:
                 report.append(f"  {obj_name}: {count} evaluations")
             report.append("")
         
-        # Modifier evaluation analysis
         if self.modifier_evaluations:
             report.append("MOST EVALUATED MODIFIERS:")
             sorted_modifiers = sorted(self.modifier_evaluations.items(), key=lambda x: x[1], reverse=True)
-            for mod_key, count in sorted_modifiers[:20]:  # Top 20
+            for mod_key, count in sorted_modifiers[:20]:
                 report.append(f"  {mod_key}: {count} evaluations")
             report.append("")
         
-        # Full log
         report.append("FULL LOG:")
         report.extend(self.log_entries)
-        
         return "\n".join(report)
     
     def save_to_text_block(self, name="NLA_Bake_Debug_Log"):
         report = self.generate_report()
-        
-        # Create or update text block in Blender
         if name in bpy.data.texts:
             text_block = bpy.data.texts[name]
             text_block.clear()
         else:
             text_block = bpy.data.texts.new(name)
-        
         text_block.write(report)
         return text_block
 
-# Global debugger instance
 _bake_debugger = BakeDebugger()
 
-# Monkey patch some Blender functions to intercept evaluations
 original_object_update = None
 original_modifier_update = None
 
 def debug_object_update(self, context, depsgraph):
-    """Intercept object updates during baking"""
     if _jiggle_globals.jiggle_baking:
         _bake_debugger.log_object_evaluation(self.name, self.type)
-    
     if original_object_update:
         return original_object_update(self, context, depsgraph)
 
 @persistent
 def debug_frame_change_pre(scene, depsgraph):
-    """Log when frame changes during baking"""
-    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug: # Check if Debug flag is ON
+    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug:
         _bake_debugger.log_frame_start(scene.frame_current)
 
 @persistent  
 def debug_frame_change_post(scene, depsgraph):
-    """Log when frame processing completes during baking"""
-    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug: # Check if Debug flag is ON
+    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug:
         _bake_debugger.log_frame_end(scene.frame_current)
-        
-        # Log which objects were evaluated this frame
         for obj in scene.objects:
-            # Check if object was recently evaluated by looking at its dependency graph
             if hasattr(depsgraph, 'object_instances'):
                 for instance in depsgraph.object_instances:
                     if instance.object == obj:
                         _bake_debugger.log_object_evaluation(obj.name, obj.type)
-                        
-                        # Log modifiers on this object
                         for modifier in obj.modifiers:
                             if modifier.show_viewport:
                                 _bake_debugger.log_modifier_evaluation(obj.name, modifier.name, modifier.type)
-
-
-# For debugging the NLA Bake operation
-import time
-from bpy.app.handlers import persistent
-
-class BakeDebugger:
-    def __init__(self):
-        self.log_entries = []
-        self.start_time = None
-        self.frame_times = {}
-        self.object_evaluations = {}
-        self.modifier_evaluations = {}
-        
-    def start_logging(self):
-        self.log_entries = []
-        self.start_time = time.time()
-        self.frame_times = {}
-        self.object_evaluations = {}
-        self.modifier_evaluations = {}
-        self.log("=== STARTING NLA BAKE DEBUG SESSION ===")
-        
-    def log(self, message):
-        timestamp = time.time() - self.start_time if self.start_time else 0
-        entry = f"[{timestamp:.3f}s] {message}"
-        self.log_entries.append(entry)
-        print(entry)  # Also print to console
-        
-    def log_frame_start(self, frame):
-        self.frame_start_time = time.time()
-        self.log(f"--- FRAME {frame} START ---")
-        
-    def log_frame_end(self, frame):
-        frame_duration = time.time() - self.frame_start_time
-        self.frame_times[frame] = frame_duration
-        self.log(f"--- FRAME {frame} END ({frame_duration:.3f}s) ---")
-        
-    def log_object_evaluation(self, obj_name, obj_type):
-        if obj_name not in self.object_evaluations:
-            self.object_evaluations[obj_name] = 0
-        self.object_evaluations[obj_name] += 1
-        self.log(f"EVALUATING OBJECT: {obj_name} ({obj_type})")
-        
-    def log_modifier_evaluation(self, obj_name, mod_name, mod_type):
-        key = f"{obj_name}.{mod_name}"
-        if key not in self.modifier_evaluations:
-            self.modifier_evaluations[key] = 0
-        self.modifier_evaluations[key] += 1
-        self.log(f"EVALUATING MODIFIER: {obj_name}.{mod_name} ({mod_type})")
-        
-    def generate_report(self):
-        total_time = time.time() - self.start_time if self.start_time else 0
-        
-        report = []
-        report.append("=== NLA BAKE PERFORMANCE REPORT ===")
-        report.append(f"Total bake time: {total_time:.3f}s")
-        report.append("")
-        
-        # Frame timing analysis
-        if self.frame_times:
-            report.append("FRAME TIMING:")
-            avg_frame_time = sum(self.frame_times.values()) / len(self.frame_times)
-            slowest_frame = max(self.frame_times.items(), key=lambda x: x[1])
-            fastest_frame = min(self.frame_times.items(), key=lambda x: x[1])
-            
-            report.append(f"  Average frame time: {avg_frame_time:.3f}s")
-            report.append(f"  Slowest frame: {slowest_frame[0]} ({slowest_frame[1]:.3f}s)")
-            report.append(f"  Fastest frame: {fastest_frame[0]} ({fastest_frame[1]:.3f}s)")
-            report.append("")
-        
-        # Object evaluation analysis
-        if self.object_evaluations:
-            report.append("MOST EVALUATED OBJECTS:")
-            sorted_objects = sorted(self.object_evaluations.items(), key=lambda x: x[1], reverse=True)
-            for obj_name, count in sorted_objects[:20]:  # Top 20
-                report.append(f"  {obj_name}: {count} evaluations")
-            report.append("")
-        
-        # Modifier evaluation analysis
-        if self.modifier_evaluations:
-            report.append("MOST EVALUATED MODIFIERS:")
-            sorted_modifiers = sorted(self.modifier_evaluations.items(), key=lambda x: x[1], reverse=True)
-            for mod_key, count in sorted_modifiers[:20]:  # Top 20
-                report.append(f"  {mod_key}: {count} evaluations")
-            report.append("")
-        
-        # Full log
-        report.append("FULL LOG:")
-        report.extend(self.log_entries)
-        
-        return "\n".join(report)
-    
-    def save_to_text_block(self, name="NLA_Bake_Debug_Log"):
-        report = self.generate_report()
-        
-        # Create or update text block in Blender
-        if name in bpy.data.texts:
-            text_block = bpy.data.texts[name]
-            text_block.clear()
-        else:
-            text_block = bpy.data.texts.new(name)
-        
-        text_block.write(report)
-        return text_block
-
-# Global debugger instance
-_bake_debugger = BakeDebugger()
-
-# Monkey patch some Blender functions to intercept evaluations
-original_object_update = None
-original_modifier_update = None
-
-def debug_object_update(self, context, depsgraph):
-    """Intercept object updates during baking"""
-    if _jiggle_globals.jiggle_baking:
-        _bake_debugger.log_object_evaluation(self.name, self.type)
-    
-    if original_object_update:
-        return original_object_update(self, context, depsgraph)
-
-@persistent
-def debug_frame_change_pre(scene, depsgraph):
-    """Log when frame changes during baking"""
-    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug: # Check if Debug flag is ON
-        _bake_debugger.log_frame_start(scene.frame_current)
-
-@persistent  
-def debug_frame_change_post(scene, depsgraph):
-    """Log when frame processing completes during baking"""
-    if _jiggle_globals.jiggle_baking and scene.jiggle.bake_debug: # Check if Debug flag is ON
-        _bake_debugger.log_frame_end(scene.frame_current)
-        
-        # Log which objects were evaluated this frame
-        for obj in scene.objects:
-            # Check if object was recently evaluated by looking at its dependency graph
-            if hasattr(depsgraph, 'object_instances'):
-                for instance in depsgraph.object_instances:
-                    if instance.object == obj:
-                        _bake_debugger.log_object_evaluation(obj.name, obj.type)
-                        
-                        # Log modifiers on this object
-                        for modifier in obj.modifiers:
-                            if modifier.show_viewport:
-                                _bake_debugger.log_modifier_evaluation(obj.name, modifier.name, modifier.type)
-
 
 ZERO_VEC = Vector((0,0,0))
 IDENTITY_MAT = Matrix.Identity(4)
 IDENTITY_QUAT = Quaternion()
-# We merge bones that are closer than this as bones perfectly on top of each other don't work well with jiggle physics.
 MERGE_BONE_THRESHOLD = 0.01
 
-# Simple 3D/4D noise function for wind turbulence
 def noise_hash(x, y, z, w=0):
-    """Simple hash function for noise generation"""
-    import math
     n = math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + w * 17.389) * 43758.5453
     return n - math.floor(n)
 
 def smooth_step(t):
-    """Smoothstep interpolation function"""
     return t * t * (3.0 - 2.0 * t)
 
 def noise_3d(x, y, z):
-    """Simple 3D noise function (Perlin-like)"""
-    import math
+    xi, yi, zi = math.floor(x), math.floor(y), math.floor(z)
+    xf, yf, zf = x - xi, y - yi, z - zi
+    u, v, w = smooth_step(xf), smooth_step(yf), smooth_step(zf)
 
-    # Get integer and fractional parts
-    xi = math.floor(x)
-    yi = math.floor(y)
-    zi = math.floor(z)
-
-    xf = x - xi
-    yf = y - yi
-    zf = z - zi
-
-    # Smooth the fractional parts
-    u = smooth_step(xf)
-    v = smooth_step(yf)
-    w = smooth_step(zf)
-
-    # Hash coordinates of the 8 cube corners
     n000 = noise_hash(xi, yi, zi)
     n100 = noise_hash(xi + 1, yi, zi)
     n010 = noise_hash(xi, yi + 1, zi)
@@ -341,7 +156,6 @@ def noise_3d(x, y, z):
     n011 = noise_hash(xi, yi + 1, zi + 1)
     n111 = noise_hash(xi + 1, yi + 1, zi + 1)
 
-    # Trilinear interpolation
     x00 = n000 * (1 - u) + n100 * u
     x10 = n010 * (1 - u) + n110 * u
     x01 = n001 * (1 - u) + n101 * u
@@ -353,27 +167,10 @@ def noise_3d(x, y, z):
     return y0 * (1 - w) + y1 * w
 
 def noise_4d(x, y, z, w):
-    """Simple 4D noise function (Perlin-like)"""
-    import math
+    xi, yi, zi, wi = math.floor(x), math.floor(y), math.floor(z), math.floor(w)
+    xf, yf, zf, wf = x - xi, y - yi, z - zi, w - wi
+    u, v, s, t = smooth_step(xf), smooth_step(yf), smooth_step(zf), smooth_step(wf)
 
-    # Get integer and fractional parts
-    xi = math.floor(x)
-    yi = math.floor(y)
-    zi = math.floor(z)
-    wi = math.floor(w)
-
-    xf = x - xi
-    yf = y - yi
-    zf = z - zi
-    wf = w - wi
-
-    # Smooth the fractional parts
-    u = smooth_step(xf)
-    v = smooth_step(yf)
-    s = smooth_step(zf)
-    t = smooth_step(wf)
-
-    # Hash coordinates of the 16 hypercube corners
     n0000 = noise_hash(xi, yi, zi, wi)
     n1000 = noise_hash(xi + 1, yi, zi, wi)
     n0100 = noise_hash(xi, yi + 1, zi, wi)
@@ -392,7 +189,6 @@ def noise_4d(x, y, z, w):
     n0111 = noise_hash(xi, yi + 1, zi + 1, wi + 1)
     n1111 = noise_hash(xi + 1, yi + 1, zi + 1, wi + 1)
 
-    # 4D interpolation
     x000 = n0000 * (1 - u) + n1000 * u
     x100 = n0100 * (1 - u) + n1100 * u
     x010 = n0010 * (1 - u) + n1010 * u
@@ -414,30 +210,21 @@ def noise_4d(x, y, z, w):
     return z0 * (1 - t) + z1 * t
 
 def get_wind_force(position, wind_direction, wind_speed, turbulence_scale, evolution):
-    """Calculate wind force at a given world position using 3D/4D noise"""
     if turbulence_scale <= 0:
         return wind_direction * wind_speed
 
-    # Sample position in noise field (scaled by turbulence)
     sample_pos = position / turbulence_scale
-
-    # Offset sample position by wind direction and speed (creates flowing effect)
     offset = wind_direction * wind_speed * evolution
     sample_x = sample_pos.x + offset.x
     sample_y = sample_pos.y + offset.y
     sample_z = sample_pos.z + offset.z
 
-    # Use 4D noise if evolution speed is non-zero, otherwise 3D
     if evolution > 0:
         noise_val = noise_4d(sample_x, sample_y, sample_z, evolution)
     else:
         noise_val = noise_3d(sample_x, sample_y, sample_z)
 
-    # Convert noise from [0,1] to [-1,1] range for turbulence
     turbulence = (noise_val * 2.0 - 1.0)
-
-    # Create turbulent wind direction
-    # Add perpendicular components for swirling effect
     up = Vector((0, 0, 1))
     if abs(wind_direction.dot(up)) > 0.99:
         up = Vector((1, 0, 0))
@@ -445,11 +232,9 @@ def get_wind_force(position, wind_direction, wind_speed, turbulence_scale, evolu
     perp1 = wind_direction.cross(up).normalized()
     perp2 = wind_direction.cross(perp1).normalized()
 
-    # Sample noise for each perpendicular direction
     turb_x = noise_3d(sample_x + 100, sample_y, sample_z) * 2.0 - 1.0
     turb_y = noise_3d(sample_x, sample_y + 100, sample_z) * 2.0 - 1.0
 
-    # Combine base wind direction with turbulence
     wind_force = wind_direction * wind_speed * (1.0 + turbulence * 0.5)
     wind_force += perp1 * turb_x * wind_speed * 0.3
     wind_force += perp2 * turb_y * wind_speed * 0.3
@@ -474,26 +259,29 @@ class JiggleGlobals:
         self.jiggle_baking = False
         self.overlay_handler = None
         self.propagating_props = False
+        
     def get_area_overlay_properties(self, area):
         area_pointer = area.as_pointer()
         if area_pointer not in self.area_overlays:
             self.area_overlays[area_pointer] = AreaProperties()
         return self.area_overlays[area_pointer]
+        
     def update_overlay_draw_handler(self):
         if self.overlay_handler is not None:
             SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
-
         self.overlay_handler = None
-        # FIXME: This doesn't handle areas being destroyed
         for area_pointer, area_props in self.area_overlays.items():
             if area_props.overlay_simulation or area_props.overlay_pose:
                 self.overlay_handler = SpaceView3D.draw_handler_add(draw_callback, (), 'WINDOW', 'POST_VIEW')
                 break
+                
     def clear_per_object_caches(self):
         self.jiggle_object_virtual_point_cache.clear()
         self.jiggle_scene_virtual_point_cache.clear()
+        
     def clear_per_frame_caches(self):
         self.jiggle_scene_virtual_point_cache.clear()
+        
     def on_unregister(self):
         self.is_rendering = False
         self.is_preroll = False
@@ -505,7 +293,6 @@ class JiggleGlobals:
         self.propagating_props = False
         if self.overlay_handler is not None:
             SpaceView3D.draw_handler_remove(self.overlay_handler, 'WINDOW')
-
 
 _jiggle_globals = JiggleGlobals()
 
@@ -520,6 +307,7 @@ class JiggleSettings:
         self.air_drag = air_drag
         self.friction = friction
         self.collision_radius = collision_radius
+        
     @classmethod
     def from_bone(cls, bone):
         return cls(bone.jiggle_root_elasticity, bone.jiggle_angle_elasticity, bone.jiggle_length_elasticity, bone.jiggle_elasticity_soften, bone.jiggle_gravity, bone.jiggle_blend, bone.jiggle_air_drag, bone.jiggle_friction, bone.jiggle_collision_radius)
@@ -651,12 +439,11 @@ class VirtualParticle:
 
     def empty_collide(self, collider, position):
         collider_matrix = collider.matrix_world
-
         local_radius = self.parent.jiggle_settings.collision_radius
         bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
         world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
 
-        world_vec = (position-collider_matrix.translation).normalized()*world_radius;
+        world_vec = (position-collider_matrix.translation).normalized()*world_radius
         local_vec = collider_matrix.inverted().to_3x3() @ world_vec
 
         local_working_position = collider_matrix.inverted() @ position
@@ -721,14 +508,12 @@ class VirtualParticle:
 
         if not self.parent.parent:
             self.desired_constrain = self.working_position = self.working_position.lerp(self.pose, self.jiggle_settings.root_elasticity*self.jiggle_settings.root_elasticity)
-
             headpos = self.bone.head
             tailpos = self.bone.tail
             diff = (headpos-tailpos)
             self.parent.desired_constrain = self.desired_constrain + (self.obj_world_matrix.to_3x3()@diff)
             return
 
-        # constrain angle
         forward_constraint = self.constrain_angle()
 
         if self.needs_collision:
@@ -738,7 +523,6 @@ class VirtualParticle:
         if self.bone.bone.use_connect:
             length_elasticity = 1
 
-        # constrain length
         diff = self.desired_constrain - self.parent.desired_constrain
         dir = diff.normalized()
         forward_constraint = self.desired_constrain.lerp(self.parent.desired_constrain + dir * self.desired_length_to_parent, length_elasticity)
@@ -750,7 +534,6 @@ class VirtualParticle:
 
         if len(self.children) > 0:
             child = self.children[0]
-
             aim_pose = (child.pose - self.parent_pose).normalized()
             aim = (child.working_position - self.parent.working_position).normalized()
             from_to_rot = aim_pose.rotation_difference(aim)
@@ -811,6 +594,7 @@ class VirtualParticle:
                 simulatedVectorSum += (local_child_working_position - local_working_position).normalized()
             cachedAnimatedVector = (cachedAnimatedVectorSum * (1.0/len(self.children))).normalized()
             simulatedVector = (simulatedVectorSum * (1.0/len(self.children))).normalized()
+        
         animPoseToPhysicsPose = cachedAnimatedVector.rotation_difference(simulatedVector).slerp(IDENTITY_QUAT, 1-self.jiggle_settings.blend).normalized()
 
         loc, rot, scale = self.bone.matrix.decompose()
@@ -818,7 +602,6 @@ class VirtualParticle:
             prot = self.parent.rolling_error.inverted().slerp(IDENTITY_QUAT, 1-self.jiggle_settings.blend)
         else:
             prot = IDENTITY_QUAT
-
 
         parent_pose_aim = local_pose - (inverted_obj_matrix@self.parent_pose) 
         adjusted_pose = (inverted_obj_matrix@self.parent.working_position) + (self.parent.rolling_error@parent_pose_aim)
@@ -878,6 +661,7 @@ def get_virtual_particles_obj(obj):
             if child.jiggle.mode == 'none':
                 continue
             visit(child, last_particle)
+            
     for bone in bones:
         if bone.jiggle.mode == 'root' or bone.jiggle.mode == 'solo':
             visit(bone)
@@ -903,18 +687,20 @@ def is_bone_animated(armature, bone_name):
     anim_data = armature.animation_data
     if not anim_data or not anim_data.action:
         return False
-    if bpy.app.version < (5, 0, 0):
+        
+    if hasattr(anim_data.action, "slots"):
+        for slot in anim_data.action.slots:
+            if hasattr(anim_utils, "action_get_channelbag_for_slot"):
+                channelbag = anim_utils.action_get_channelbag_for_slot(anim_data.action, slot)
+                if not channelbag:
+                    continue
+                for fcurve in channelbag.fcurves:
+                    if f'pose.bones["{bone_name}"]' in fcurve.data_path:
+                        return True
+    elif hasattr(anim_data.action, "fcurves"):
         for fcurve in anim_data.action.fcurves:
             if f'pose.bones["{bone_name}"]' in fcurve.data_path:
                 return True
-    else:
-        for slot in anim_data.action.slots:
-            channelbag = anim_utils.action_get_channelbag_for_slot(anim_data.action, slot)
-            if not channelbag:
-                continue
-            for fcurve in channelbag.fcurves:
-                if f'pose.bones["{bone_name}"]' in fcurve.data_path:
-                    return True
     return False
 
 def reset_bone(b):
@@ -934,7 +720,7 @@ def update_pose_bone_jiggle_prop(self,context,prop):
     if context.selected_pose_bones is None:
         return
     def keyframe(auto_key, b, prop):
-        if auto_key and prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction']:
+        if auto_key and prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
             b.keyframe_insert(data_path=prop, index=-1)
     _jiggle_globals.propagating_props = True
     try:
@@ -1074,7 +860,12 @@ def draw_callback():
             bone_matrix_world = particle.bone.id_data.matrix_world @ particle.bone.matrix
             world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
             billboard_circle(verts, particle.position, world_radius)
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            
+    try:
+        shader = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
+    except Exception:
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        
     shader.bind()
 
     if do_pose:
@@ -1092,7 +883,6 @@ def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
     dt = 1.0 / scene.render.fps
     dt2 = dt*dt
 
-    # Get wind settings
     wind_enabled = scene.jiggle.enable_wind
     wind_direction = Vector(scene.jiggle.wind_direction).normalized() if scene.jiggle.wind_direction.length > 0 else Vector((1, 0, 0))
     wind_speed = scene.jiggle.wind_speed
@@ -1100,16 +890,13 @@ def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
     evolution_speed = scene.jiggle.wind_evolution_speed
 
     for frame_step in range(framecount):
-        # Calculate evolution value for 4D noise (changes over time)
         evolution = (scene.frame_current + frame_step) * evolution_speed if evolution_speed > 0 else 0
 
         for particle in virtual_particles:
-            # Calculate wind force at particle position
             if wind_enabled and wind_speed > 0:
                 wind_force = get_wind_force(particle.position, wind_direction, wind_speed, turbulence_scale, evolution)
             else:
                 wind_force = ZERO_VEC
-
             particle.verlet_integrate(dt2, scene.gravity, wind_force)
         for particle in virtual_particles:
             particle.constrain(depsgraph)
@@ -1214,7 +1001,6 @@ def jiggle_render_cancel(scene):
     _jiggle_globals.is_rendering = False
 
 class ARMATURE_OT_JiggleCopy(Operator):
-    """Copy active jiggle settings to selected bones"""
     bl_idname = "armature.jiggle_copy"
     bl_label = "Copy Settings to Selected"
     bl_options = {'UNDO'}
@@ -1253,7 +1039,6 @@ def jiggle_reset(context):
     context.scene.jiggle.lastframe = context.scene.frame_current
 
 class SCENE_OT_JiggleToggleProfiler(Operator):
-    """Toggle the jiggle profiler"""
     bl_idname = "scene.jiggle_toggle_profiler"
     bl_label = "Toggle Jiggle Profiler"
     
@@ -1267,7 +1052,6 @@ class SCENE_OT_JiggleToggleProfiler(Operator):
         return {'FINISHED'}
 
 class VIEW3D_OT_JiggleTogglePoseOverlay(Operator):
-    """Toggle the detected rest pose overlay"""
     bl_idname = "view3d.jiggle_toggle_pose_overlay"
     bl_label = "Toggle Jiggle Rest Pose Overlay"
     
@@ -1284,7 +1068,6 @@ class VIEW3D_OT_JiggleTogglePoseOverlay(Operator):
         return {'FINISHED'}
 
 class VIEW3D_OT_JiggleToggleSimulationOverlay(Operator):
-    """Toggle the jiggle simulation overlay"""
     bl_idname = "view3d.jiggle_toggle_simulation_overlay"
     bl_label = "Toggle Jiggle Simulation Overlay"
     
@@ -1301,7 +1084,6 @@ class VIEW3D_OT_JiggleToggleSimulationOverlay(Operator):
         return {'FINISHED'}
 
 class SCENE_OT_JiggleReset(Operator):
-    """Reset jiggle physics of scene, bone, or object depending on context"""
     bl_idname = "scene.jiggle_reset"
     bl_label = "Reset Physics"
     
@@ -1322,10 +1104,9 @@ class SCENE_OT_JiggleReset(Operator):
         return {'FINISHED'}
 
 class ANIM_OT_JiggleClearKeyframes(Operator):
-    """Reset keyframes on jiggle parameters"""
     bl_idname = "anim.jiggle_clear_keyframes"
     bl_label = "Clear Parameter Keyframes"
-    bl_description = "Remove keyframes from jiggle parameters on selected bones. This will not remove the jiggle settings themselves, just the keyframes that control them."
+    bl_description = "Remove keyframes from jiggle parameters on selected bones."
     bl_options = {'UNDO'}
     
     @classmethod
@@ -1333,17 +1114,38 @@ class ANIM_OT_JiggleClearKeyframes(Operator):
         return context.scene.jiggle.enable and context.mode in ['POSE'] and context.object and context.object.animation_data and context.object.animation_data.action
     
     def execute(self,context):
-        action = context.object.animation_data.action
+        anim_data = context.object.animation_data
+        action = anim_data.action
+        props = ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']
+        
         for bone in context.selected_pose_bones:
-            for prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
-                data_path = f'pose.bones["{bone.name}"].{prop}'
-                fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path == data_path]
+            for prop in props:
+                try:
+                    bone.keyframe_delete(data_path=prop)
+                except RuntimeError:
+                    pass
+            
+            data_paths = [f'pose.bones["{bone.name}"].{prop}' for prop in props]
+            
+            if hasattr(action, "slots"):
+                try:
+                    from bpy_extras import anim_utils
+                    for slot in action.slots:
+                        channelbag = anim_utils.action_get_channelbag_for_slot(action, slot)
+                        if channelbag:
+                            fcurves_to_remove = [fc for fc in channelbag.fcurves if fc.data_path in data_paths]
+                            for fc in fcurves_to_remove:
+                                channelbag.fcurves.remove(fc)
+                except Exception:
+                    pass
+            elif hasattr(action, "fcurves"):
+                fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path in data_paths]
                 for fc in fcurves_to_remove:
                     action.fcurves.remove(fc)
+                    
         return {'FINISHED'}
 
 class SCENE_OT_JiggleProfile(Operator):
-    """Prints the execution time of the top 20 functions to the System Console"""
     bl_idname = "scene.jiggle_profile"
     bl_label = "Print Profiling Information to Console"
     
@@ -1357,18 +1159,21 @@ class SCENE_OT_JiggleProfile(Operator):
         _jiggle_globals.profiler.clear()
         return {'FINISHED'}
 
+def is_pose_bone_selected(pose_bone):
+    if hasattr(pose_bone, "select"): return pose_bone.select
+    return pose_bone.bone.select
+
 def jiggle_select(context):
     jiggle_objs = [obj for obj in context.scene.objects if obj.type == 'ARMATURE' and obj.jiggle.enable and not obj.jiggle.mute]
     for ob in jiggle_objs:
         jiggle_bones = [bone for bone in ob.pose.bones if getattr(bone.jiggle, 'enable', False)]
         for bone in jiggle_bones:
-            if bpy.app.version < (5, 0, 0):
-                bone.bone.select = True
-            else:
+            if hasattr(bone, "select"):
                 bone.select = True
+            else:
+                bone.bone.select = True
     
 class ARMATURE_OT_JiggleSelect(Operator):
-    """Select jiggle bones on selected objects in pose mode"""
     bl_idname = "armature.jiggle_select"
     bl_label = "Select Enabled"
     bl_options = {'UNDO'}
@@ -1381,9 +1186,7 @@ class ARMATURE_OT_JiggleSelect(Operator):
         jiggle_select(context)
         return {'FINISHED'}
 
-
 class ARMATURE_OT_JiggleBake(Operator):
-    """Bake this object's visible jiggle bones to keyframes"""
     bl_idname = "armature.jiggle_bake"
     bl_label = "Bake Jiggle"
     bl_options = {'UNDO'}
@@ -1392,11 +1195,9 @@ class ARMATURE_OT_JiggleBake(Operator):
     def poll(cls,context):
         return context.object and context.mode == 'POSE' and context.object.type == 'ARMATURE' and context.object.jiggle.enable and not context.object.jiggle.mute
     
-    # Modified ARMATURE_OT_JiggleBake.execute() method with debugging. This version applies optimizations earlier:
     def execute(self, context):
         global _jiggle_globals, _bake_debugger
         
-        # Only start debug logging if enabled
         if context.scene.jiggle.bake_debug:
             _bake_debugger.start_logging()
             _bake_debugger.log(f"Starting bake for object: {context.object.name}")
@@ -1405,11 +1206,13 @@ class ARMATURE_OT_JiggleBake(Operator):
 
         bone_collections = context.object.data.collections
         collection_visibility = {col.name: col.is_visible for col in bone_collections}
-        collection_solo = {col.name: col.is_solo for col in bone_collections}
+        collection_solo = {col.name: getattr(col, "is_solo", False) for col in bone_collections}
 
-        # Store original states to restore later
         hidden_objects = []
         disabled_modifiers = []
+        
+        # GUARDAMOS LA SELECCIÓN DEL USUARIO
+        user_selected_bone_names = [b.name for b in context.selected_pose_bones] if context.selected_pose_bones else []
 
         try:
             def push_nla():
@@ -1424,16 +1227,6 @@ class ARMATURE_OT_JiggleBake(Operator):
                 
             push_nla()
             
-            # Log scene state before optimization (only if debugging enabled)
-            if context.scene.jiggle.bake_debug:
-                visible_objects = [obj for obj in context.scene.objects if not obj.hide_viewport]
-                _bake_debugger.log(f"Visible objects before optimization: {len(visible_objects)}")
-                for obj in visible_objects:
-                    active_modifiers = [mod for mod in obj.modifiers if mod.show_viewport]
-                    if active_modifiers:
-                        _bake_debugger.log(f"  {obj.name} ({obj.type}): {len(active_modifiers)} active modifiers")
-
-            # Get all collision objects that must remain functional
             collision_objects = set()
             for armature_obj in [o for o in context.scene.objects if o.type == 'ARMATURE']:
                 for bone in armature_obj.pose.bones:
@@ -1444,60 +1237,47 @@ class ARMATURE_OT_JiggleBake(Operator):
                             for coll_obj in bone.jiggle.collider_collection.objects:
                                 collision_objects.add(coll_obj)
 
-            if context.scene.jiggle.bake_debug:
-                _bake_debugger.log(f"Found {len(collision_objects)} collision objects")
-                for obj in collision_objects:
-                    _bake_debugger.log(f"  Collision object: {obj.name} ({obj.type})")
-
-            # Aggressively optimize the scene BEFORE preroll
             for obj in context.scene.objects:
-                # Keep armatures, empties, and collision objects visible
                 if obj.type in ['ARMATURE', 'EMPTY'] or obj in collision_objects:
-                    # But still disable expensive modifiers on collision objects
                     if obj in collision_objects:
                         for modifier in obj.modifiers:
                             if modifier.type in ['NODES', 'SUBSURF', 'MULTIRES', 'FLUID', 'CLOTH', 'SOFT_BODY', 'OCEAN', 'DYNAMIC_PAINT']:
                                 if modifier.show_viewport:
-                                    if context.scene.jiggle.bake_debug:
-                                        _bake_debugger.log(f"Disabling modifier {modifier.name} on collision object {obj.name}")
                                     disabled_modifiers.append((obj, modifier))
                                     modifier.show_viewport = False
                     continue
-                    
-                # For everything else: disable modifiers first, then hide
                 else:
-                    # Disable all modifiers on objects we're about to hide
                     for modifier in obj.modifiers:
                         if modifier.show_viewport:
                             disabled_modifiers.append((obj, modifier))
                             modifier.show_viewport = False
-                    
-                    # Then hide the object
                     if not obj.hide_viewport:
                         hidden_objects.append(obj)
                         obj.hide_viewport = True
-
-            # Log final scene state after early optimization (only if debugging enabled)
-            if context.scene.jiggle.bake_debug:
-                final_visible_objects = [obj for obj in context.scene.objects if not obj.hide_viewport]
-                _bake_debugger.log(f"Visible objects after EARLY optimization: {len(final_visible_objects)}")
-                _bake_debugger.log(f"Hidden objects: {len(hidden_objects)}")
-                _bake_debugger.log(f"Disabled modifiers: {len(disabled_modifiers)}")
             
-            # Now do preroll with optimized scene
             duration = context.scene.frame_end - context.scene.frame_start
             _jiggle_globals.is_preroll = False
 
             for col in bone_collections:
-                col.is_solo = False
+                if hasattr(col, "is_solo"): col.is_solo = False
                 col.is_visible = True
 
             bpy.ops.pose.select_all(action='DESELECT')
-            jiggle_select(context)
-            jiggle_reset(context)
             
-            if context.scene.jiggle.bake_debug:
-                _bake_debugger.log("Starting preroll with optimized scene...")
+            # LÓGICA DE FILTRADO DEPENDIENDO DE LA OPCIÓN DEL USUARIO
+            if context.scene.jiggle.bake_target == 'ALL':
+                jiggle_select(context)
+            else:
+                for b_name in user_selected_bone_names:
+                    bone = context.object.pose.bones.get(b_name)
+                    # Asegurar que el hueso tiene jiggle activado antes de seleccionarlo para el bake
+                    if bone and getattr(bone.jiggle, 'enable', False):
+                        if hasattr(bone, "select"):
+                            bone.select = True
+                        else:
+                            bone.bone.select = True
+                            
+            jiggle_reset(context)
                 
             if context.scene.jiggle.loop:
                 for preroll in reversed(range(context.scene.jiggle.preroll)):
@@ -1510,10 +1290,6 @@ class ARMATURE_OT_JiggleBake(Operator):
                 virtual_particles = get_virtual_particles(context.scene)
                 jiggle_simulate(context.scene, context.evaluated_depsgraph_get(), virtual_particles, context.scene.jiggle.preroll)
             
-            if context.scene.jiggle.bake_debug:
-                _bake_debugger.log("Preroll completed, starting actual bake...")
-            
-            # Bake phase
             if context.scene.use_preview_range:
                 frame_start = context.scene.frame_preview_start
                 frame_end = context.scene.frame_preview_end
@@ -1521,23 +1297,13 @@ class ARMATURE_OT_JiggleBake(Operator):
                 frame_start = context.scene.frame_start
                 frame_end = context.scene.frame_end
             
-            if context.scene.jiggle.bake_debug:
-                _bake_debugger.log(f"Baking frames {frame_start} to {frame_end}")
-                _bake_debugger.log("Starting bpy.ops.nla.bake()...")
-                bake_start_time = time.time()
-            
-            # Use the original NLA baking with already-optimized scene
             bpy.ops.nla.bake(frame_start = frame_start,
                             frame_end = frame_end,
                             only_selected = True,
-                            visual_keying = True,  # NOTE: This is necessary for jiggle physics!
+                            visual_keying = True, 
                             use_current_action = context.scene.jiggle.bake_overwrite,
                             bake_types={'POSE'},
                             channel_types={'LOCATION','ROTATION','SCALE'})
-            
-            if context.scene.jiggle.bake_debug:
-                bake_duration = time.time() - bake_start_time
-                _bake_debugger.log(f"bpy.ops.nla.bake() completed in {bake_duration:.3f}s")
             
             _jiggle_globals.is_preroll = False
             context.object.jiggle.freeze = True
@@ -1547,29 +1313,19 @@ class ARMATURE_OT_JiggleBake(Operator):
                     context.object.animation_data.action.name = 'JiggleAction'
             
         finally:
-            # Restore scene state
-            if context.scene.jiggle.bake_debug:
-                _bake_debugger.log("Restoring scene state...")
-                
             for obj in hidden_objects:
                 obj.hide_viewport = False
-            
             for obj, modifier in disabled_modifiers:
                 modifier.show_viewport = True
-                
             for col in bone_collections:
-                col.is_solo = collection_solo[col.name]
+                if hasattr(col, "is_solo"): col.is_solo = collection_solo[col.name]
                 col.is_visible = collection_visibility[col.name]
             _jiggle_globals.jiggle_baking = False
             
-            # Generate and save debug report (only if debugging enabled)
             if context.scene.jiggle.bake_debug:
-                _bake_debugger.log("=== BAKE COMPLETE ===")
-                text_block = _bake_debugger.save_to_text_block()
-                _bake_debugger.log(f"Debug report saved to text block: {text_block.name}")
+                _bake_debugger.save_to_text_block()
         
         return {'FINISHED'}
-
 
 class JigglePanel:
     bl_category = 'Animation'
@@ -1598,7 +1354,6 @@ class JIGGLE_PT_Settings(JigglePanel, Panel):
         
     def draw(self,context):
         row = self.layout.row()
-
         icon = 'HIDE_ON' if not context.scene.jiggle.enable else 'SCENE_DATA'
         row.prop(context.scene.jiggle, "enable", icon=icon, text="",emboss=False)
         if not context.scene.jiggle.enable:
@@ -1620,11 +1375,9 @@ class JIGGLE_PT_Settings(JigglePanel, Panel):
             row.label(text = ' Select pose bone.')
             return
 
-
 class JIGGLE_OT_bone_connected_disable(Operator):
     bl_idname = "armature.jiggle_bone_connected_disable"
     bl_label = "Disconnect Selected Bones"
-    bl_description = "Connected bones ignore length elasticity, preventing them from stretching. Click this button to automatically fix"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -1636,25 +1389,17 @@ class JIGGLE_OT_bone_connected_disable(Operator):
         previous_mode = obj.mode
         bpy.ops.object.mode_set(mode='EDIT')
         for pose_bone in obj.pose.bones:
-            if bpy.app.version < (5, 0, 0):
-                if not pose_bone.bone.select:
-                    continue
-            else:
-                if not pose_bone.select:
-                    continue
-            edit_bone = obj.data.edit_bones.get(pose_bone.name)
-            if edit_bone is None:
+            if not is_pose_bone_selected(pose_bone):
                 continue
-            if edit_bone.parent:
+            edit_bone = obj.data.edit_bones.get(pose_bone.name)
+            if edit_bone and edit_bone.parent:
                 edit_bone.use_connect = False
-
         bpy.ops.object.mode_set(mode=previous_mode)
         return {'FINISHED'}
 
 class JIGGLE_OT_bone_constraints_disable(Operator):
     bl_idname = "armature.jiggle_bone_constraints_disable"
     bl_label = "Disable Constraints"
-    bl_description = "Constraints are applied after jiggle, which can cause strange behavior. Click this button to automatically disable constraints on selected bones"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -1664,12 +1409,8 @@ class JIGGLE_OT_bone_constraints_disable(Operator):
     def execute(self, context):
         obj = context.object
         for pose_bone in obj.pose.bones:
-            if bpy.app.version < (5, 0, 0):
-                if not pose_bone.bone.select:
-                    continue
-            else:
-                if not pose_bone.select:
-                    continue
+            if not is_pose_bone_selected(pose_bone):
+                continue
             for constraint in pose_bone.constraints:
                 constraint.enabled = False
         return {'FINISHED'}
@@ -1709,8 +1450,6 @@ class JIGGLE_PT_BoneConstraintsWarning(JigglePanel,Panel):
         box = self.layout.box()
         box.label(text=f'Bone constraints are applied after jiggle, which can cause strange behavior.')
         box.label(text=f'Be weary that using constraints in place of parenting can also cause the jiggle pose to not work as intended.')
-        box.label(text=f'Click the button below to automatically disable constraints on selected bones.')
-        box.label(text=f'You can safely ignore this if you are intending to constrain the jiggle pose.')
         self.layout.operator(JIGGLE_OT_bone_constraints_disable.bl_idname, text='Disable Constraints on Selected Bones')
 
 class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,Panel):
@@ -1729,28 +1468,7 @@ class JIGGLE_PT_ConnectedBonesWarning(JigglePanel,Panel):
     def draw(self,context):
         box = self.layout.box()
         box.label(text=f'Bones that are connected cannot be translated, preventing them from stretching.')
-        box.label(text=f'This makes them ignore length elasticity.')
-        box.label(text=f'You can safely ignore this if stretchiness is not desired.')
         self.layout.operator(JIGGLE_OT_bone_connected_disable.bl_idname, text='Disconnect Selected Bones')
-
-
-class JIGGLE_PT_NoKeyframesWarning(JigglePanel,Panel):
-    bl_label = ''
-    bl_parent_id = 'JIGGLE_PT_Settings'
-    bl_options = {'HEADER_LAYOUT_EXPAND'}
-    
-    @classmethod
-    def poll(cls,context):
-        return context.scene.jiggle.enable and context.object and not context.object.jiggle.mute and context.active_pose_bone and context.active_pose_bone.jiggle.enable and not is_bone_animated(context.active_pose_bone.id_data, context.active_pose_bone.name)
-    
-    def draw_header(self,context):
-        row=self.layout.row(align=True)
-        row.label(text='No Keyframes Detected', icon='ERROR')
-    
-    def draw(self,context):
-        box = self.layout.box()
-        box.label(text=f'Position and rotation keyframes are used for the rest pose.')
-        box.label(text=f'You can safely ignore this if you are using actions in the NLA.')
 
 class JIGGLE_PT_FrameSkippingEnabledWarning(JigglePanel,Panel):
     bl_label = ''
@@ -1768,7 +1486,6 @@ class JIGGLE_PT_FrameSkippingEnabledWarning(JigglePanel,Panel):
     def draw(self,context):
         box = self.layout.box()
         box.label(text=f'Playback set to Frame Dropping can cause the preview to be inaccurate.')
-        box.label(text=f'Bakes will look very different.')
 
 class JIGGLE_PT_MeshCollisionWarning(JigglePanel,Panel):
     bl_label = ''
@@ -1798,7 +1515,7 @@ class JIGGLE_PT_MeshCollisionWarning(JigglePanel,Panel):
     def draw(self,context):
         box = self.layout.box()
         box.label(text=f'Meshes are not convex, making them inoptimal for collisions.')
-        box.label(text=f'Please use scaled Empty spheres instead (Add -> Empty -> Sphere)')
+        box.label(text=f'Please use scaled Empty spheres instead.')
 
 class JIGGLE_PT_Bone(JigglePanel,Panel):
     bl_label = ''
@@ -1837,10 +1554,9 @@ class JIGGLE_PT_Bone(JigglePanel,Panel):
             row = col.row(align=True)
             row.prop_search(b.jiggle, 'collider', context.scene, 'objects',text=' ')
             if b.jiggle.collider:
-                if b.jiggle.collider:
-                    collision = True
-                else:
-                    row.label(text='',icon='UNLINKED')
+                collision = True
+            else:
+                row.label(text='',icon='UNLINKED')
         else:
             row = col.row(align=True)
             row.prop_search(b.jiggle, 'collider_collection', bpy.data, 'collections', text=' ')
@@ -1892,10 +1608,8 @@ class JIGGLE_PT_Wind(JigglePanel,Panel):
         layout = self.layout
         layout.use_property_split=True
         layout.use_property_decorate=False
-
         jiggle = context.scene.jiggle
         layout.enabled = jiggle.enable_wind
-
         col = layout.column(align=True)
         col.prop(jiggle, 'wind_direction')
         col.prop(jiggle, 'wind_speed')
@@ -1917,6 +1631,10 @@ class JIGGLE_PT_Bake(JigglePanel,Panel):
         layout.use_property_split=True
         layout.use_property_decorate=False
         jiggle = context.scene.jiggle
+        
+        # UI: Mostramos la propiedad Enum expandida para que se vea como Radio Buttons
+        layout.prop(jiggle, 'bake_target', expand=True)
+        
         layout.prop(jiggle, 'preroll')
         layout.prop(jiggle, 'bake_overwrite')
         row = layout.row()
@@ -1938,7 +1656,6 @@ class JIGGLE_MT_JiggleBonePresets(Menu):
     draw = Menu.draw_preset
 
 class JIGGLE_OT_AddJiggleBonePreset(AddPresetBase, Operator):
-    """Saves or removes the current jiggle bone settings on the active bone as a preset."""
     bl_idname = 'armature.add_jigglebone_preset'
     bl_label = 'Add/Remove Jiggle Bone preset'
     preset_menu = 'JIGGLE_MT_JiggleBonePresets'
@@ -1948,11 +1665,7 @@ class JIGGLE_OT_AddJiggleBonePreset(AddPresetBase, Operator):
     def poll(cls,context):
         return context.scene.jiggle.enable and context.object and context.object.jiggle.enable and context.mode == 'POSE' and context.active_pose_bone and context.active_pose_bone.jiggle.enable
 
-    # Common variable used for all preset values
-    preset_defines = [
-        'b = bpy.context.active_pose_bone',
-    ]
-
+    preset_defines = ['b = bpy.context.active_pose_bone']
     preset_values = [
         'b.jiggle_root_elasticity',
         'b.jiggle_angle_elasticity',
@@ -1963,253 +1676,79 @@ class JIGGLE_OT_AddJiggleBonePreset(AddPresetBase, Operator):
         'b.jiggle_air_drag',
         'b.jiggle_friction',
     ]
-
-    # Directory to store the presets
     preset_subdir = 'jigglebones'
 
 class JiggleBone(PropertyGroup):
     position0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     rest_pose_position0: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-
     position1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     rest_pose_position1: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-
     position2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     position_last2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
     rest_pose_position2: FloatVectorProperty(subtype='TRANSLATION', override={'LIBRARY_OVERRIDABLE'})
-
-    enable: BoolProperty(
-        name = 'Enable Bone Jiggle',
-        description = "Enable jiggle on this bone", default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-        options={'HIDDEN'},
-        update=lambda s, c: update_nested_jiggle_prop(s, c, 'enable')
-    )
-    mode: EnumProperty(
-        name='Jiggle Mode',
-        items=[('none','None','Not jiggled, and contains no jiggle bone children'),
-               ('root','Root','A root jiggle bone'),
-               ('solo','Solo','A bone without jiggled children or parents'),
-               ('merge','Merge','Ignore this bone, but within its children is a jiggle bone'),
-               ('normal','Normal','User-driven jiggle'),
-               ('tip', 'Tip', 'A tip jiggle bone, needing a forward projected particle, contains no jiggle bone children')],
-        override={'LIBRARY_OVERRIDABLE'},
-        options={'HIDDEN'},
-    )
-    collider_type: EnumProperty(
-        name='Collider Type',
-        items=[('Object','Object','Collide with a selected mesh'),('Collection','Collection','Collide with all meshes in selected collection')],
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_type')
-    )
-    collider: PointerProperty(
-        name='Collider Object', 
-        description='Mesh object to collide with', 
-        type=Object, 
-        poll = collider_poll, 
-        override={'LIBRARY_OVERRIDABLE'}, 
-        update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider')
-    )
-    collider_collection: PointerProperty(
-        name = 'Collider Collection', 
-        description='Collection to collide with', 
-        type=Collection, 
-        override={'LIBRARY_OVERRIDABLE'}, 
-        update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_collection')
-    )
+    enable: BoolProperty(name='Enable Bone Jiggle', default=False, override={'LIBRARY_OVERRIDABLE'}, options={'HIDDEN'}, update=lambda s, c: update_nested_jiggle_prop(s, c, 'enable'))
+    mode: EnumProperty(items=[('none','None',''),('root','Root',''),('solo','Solo',''),('merge','Merge',''),('normal','Normal',''),('tip','Tip','')], override={'LIBRARY_OVERRIDABLE'}, options={'HIDDEN'})
+    collider_type: EnumProperty(name='Collider Type', items=[('Object','Object',''),('Collection','Collection','')], override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_type'))
+    collider: PointerProperty(name='Collider Object', type=Object, poll=collider_poll, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider'))
+    collider_collection: PointerProperty(name='Collider Collection', type=Collection, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_nested_jiggle_prop(s, c, 'collider_collection'))
     
 class JiggleScene(PropertyGroup):
     lastframe: IntProperty()
-    loop: BoolProperty(name='Loop Physics', description='Physics continues as timeline loops', default=False)
-    preroll: IntProperty(name = 'Preroll', description='Frames to run simulation before bake', min=0, default=30)
-    bake_overwrite: BoolProperty(name='Overwrite Current Action', description='Bake jiggle into current action, instead of creating a new one', default = False)
-    bake_nla: BoolProperty(name='Current Action to NLA', description='Move existing animation on the armature into an NLA strip', default = False) 
-    bake_debug: BoolProperty(
-        name='Enable Bake Debugging', 
-        description='Enable detailed logging during bake process. Creates a text block with performance analysis', 
-        default = False,
+    loop: BoolProperty(name='Loop Physics', default=False)
+    preroll: IntProperty(name='Preroll', min=0, default=30)
+    bake_overwrite: BoolProperty(name='Overwrite Current Action', default=False)
+    bake_nla: BoolProperty(name='Current Action to NLA', default=False) 
+    bake_debug: BoolProperty(name='Enable Bake Debugging', default=False)
+    
+    # NEW PROPERTY: Radio Buttons to control the bake target
+    bake_target: EnumProperty(
+        name="Target",
+        items=[
+            ('ALL', 'Bake All Bones', 'Bakes all bones with jiggle enabled in the armature'),
+            ('SELECTED', 'Bake Selected Only', 'Bakes only the selected bones (useful to avoid overwriting previous bakes)')
+        ],
+        default='ALL'
     )
-    enable: BoolProperty(
-        name = 'Enable Scene',
-        description = 'Enable jiggle on this scene',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    debug: BoolProperty(
-        name = 'Enable debug',
-        description = 'Enable profiling and debug features',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    simulate_during_scrub: BoolProperty(
-        name = 'Simulate During Scrub',
-        description = 'Simulate jiggle physics while scrubbing the timeline',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-
-    # Wind settings
-    enable_wind: BoolProperty(
-        name = 'Enable Wind',
-        description = 'Enable wind force affecting jiggle physics',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    wind_direction: FloatVectorProperty(
-        name = 'Wind Direction',
-        description = 'Direction of the wind in world space',
-        default = (1.0, 0.0, 0.0),
-        subtype = 'DIRECTION',
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    wind_speed: FloatProperty(
-        name = 'Wind Speed',
-        description = 'Base speed/strength of the wind',
-        default = 0.5,
-        min = 0.0,
-        soft_max = 10.0,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    wind_turbulence_scale: FloatProperty(
-        name = 'Turbulence Scale',
-        description = 'Scale of the wind turbulence noise field (larger = smoother, more gradual changes)',
-        default = 2.0,
-        min = 0,
-        soft_max = 10.0,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    wind_evolution_speed: FloatProperty(
-        name = 'Evolution Speed',
-        description = 'Speed at which the wind pattern evolves over time (4D noise)',
-        default = 0.1,
-        min = 0.0,
-        soft_max = 1.0,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
+    
+    enable: BoolProperty(name='Enable Scene', default=False, override={'LIBRARY_OVERRIDABLE'})
+    debug: BoolProperty(name='Enable debug', default=False, override={'LIBRARY_OVERRIDABLE'})
+    simulate_during_scrub: BoolProperty(name='Simulate During Scrub', default=False, override={'LIBRARY_OVERRIDABLE'})
+    enable_wind: BoolProperty(name='Enable Wind', default=False, override={'LIBRARY_OVERRIDABLE'})
+    wind_direction: FloatVectorProperty(name='Wind Direction', default=(1.0, 0.0, 0.0), subtype='DIRECTION', override={'LIBRARY_OVERRIDABLE'})
+    wind_speed: FloatProperty(name='Wind Speed', default=0.5, min=0.0, soft_max=10.0, override={'LIBRARY_OVERRIDABLE'})
+    wind_turbulence_scale: FloatProperty(name='Turbulence Scale', default=2.0, min=0, soft_max=10.0, override={'LIBRARY_OVERRIDABLE'})
+    wind_evolution_speed: FloatProperty(name='Evolution Speed', default=0.1, min=0.0, soft_max=1.0, override={'LIBRARY_OVERRIDABLE'})
 
 class JiggleObject(PropertyGroup):
-    enable: BoolProperty(
-        name = 'Enable Armature',
-        description = 'Enable jiggle on this armature',
-        default = False,
-        options={'HIDDEN'},
-        override={'LIBRARY_OVERRIDABLE'}
-    )
-    mute: BoolProperty(
-        name = 'Mute Armature',
-        description = 'Mute jiggle on this armature',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'},
-    )
-    freeze: BoolProperty(
-        name = 'Freeze Jiggle',
-        description = 'Jiggle Calculation frozen after baking',
-        default = False,
-        override={'LIBRARY_OVERRIDABLE'}
-    )
+    enable: BoolProperty(name='Enable Armature', default=False, options={'HIDDEN'}, override={'LIBRARY_OVERRIDABLE'})
+    mute: BoolProperty(name='Mute Armature', default=False, override={'LIBRARY_OVERRIDABLE'})
+    freeze: BoolProperty(name='Freeze Jiggle', default=False, override={'LIBRARY_OVERRIDABLE'})
 
 def install_presets():
     try:
-        # Path to bundled presets
         src_dir = os.path.join(os.path.dirname(__file__), "presets", "jigglebones")
-        # Blender's user preset directory
         dst_dir = bpy.utils.user_resource('SCRIPTS', path="presets/jigglebones", create=True)
-
-        # Copy each preset if it doesn't exist already
         for filename in os.listdir(src_dir):
             src_file = os.path.join(src_dir, filename)
             dst_file = os.path.join(dst_dir, filename)
-            if not os.path.exists(dst_file):
-                shutil.copyfile(src_file, dst_file)
-    except Exception as e:
-        print(f"Error installing default Jiggle Physics jigglebone presets: {e}")
+            if not os.path.exists(dst_file): shutil.copyfile(src_file, dst_file)
+    except Exception:
+        pass
 
 def register():
     install_presets()
-    # These properties are strictly animatable properties, as nested properties cannot be animated on pose bones.
-    PoseBone.jiggle_angle_elasticity = FloatProperty(
-        name = 'Angle Elasticity',
-        description = 'Spring angle stiffness, higher means more rigid. Also has a small effect on the bone length',
-        min = 0,
-        default = 0.6,
-        max = 1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_angle_elasticity')
-    )
-    PoseBone.jiggle_length_elasticity = FloatProperty(
-        name = 'Length Elasticity',
-        description = 'Spring length stiffness, higher means more rigid to tension',
-        min = 0,
-        default = 0.8,
-        max=1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_length_elasticity')
-    )
-    PoseBone.jiggle_root_elasticity = FloatProperty(
-        name = 'Root Elasticity',
-        description = 'Elasticity of the root bone, higher means more rigid to tension',
-        min = 0,
-        default = 0.8,
-        max=1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_root_elasticity')
-    )
-    PoseBone.jiggle_elasticity_soften = FloatProperty(
-        name = 'Elasticity Soften',
-        description = 'Weakens the elasticity of the bone when its closer to the target pose. Higher means more like a free-rolling-ball-socket',
-        min = 0,
-        default = 0,
-        max=1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_elasticity_soften')
-    )
-    PoseBone.jiggle_gravity = FloatProperty(
-        name = 'Gravity',
-        description = 'Multiplier for scene gravity',
-        default = 1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_gravity')
-    )
-    PoseBone.jiggle_blend = FloatProperty(
-        name = 'Blend',
-        description = 'jiggle blend, 0 means no jiggle, 1 means full jiggle',
-        min = 0,
-        default = 1,
-        max = 1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_blend')
-    )
-    PoseBone.jiggle_air_drag = FloatProperty(
-        name = 'Air Drag',
-        description = 'How much the bone is slowed down by air, higher means more drag',
-        min = 0,
-        default = 0,
-        max = 1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_air_drag')
-    )
-    PoseBone.jiggle_friction = FloatProperty(
-        name = 'Friction',
-        description = 'Internal friction, higher means return to rest quicker',
-        min = 0,
-        default = 0.1,
-        max = 1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_friction')
-    )
-    PoseBone.jiggle_collision_radius = FloatProperty(
-        name = 'Collision Radius',
-        description = 'Collision radius for use in collision detection and depenetration.',
-        min = 0,
-        default = 0.1,
-        override={'LIBRARY_OVERRIDABLE'},
-        update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collision_radius')
-    )
+    PoseBone.jiggle_angle_elasticity = FloatProperty(name='Angle Elasticity', min=0, default=0.6, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_angle_elasticity'))
+    PoseBone.jiggle_length_elasticity = FloatProperty(name='Length Elasticity', min=0, default=0.8, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_length_elasticity'))
+    PoseBone.jiggle_root_elasticity = FloatProperty(name='Root Elasticity', min=0, default=0.8, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_root_elasticity'))
+    PoseBone.jiggle_elasticity_soften = FloatProperty(name='Elasticity Soften', min=0, default=0, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_elasticity_soften'))
+    PoseBone.jiggle_gravity = FloatProperty(name='Gravity', default=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_gravity'))
+    PoseBone.jiggle_blend = FloatProperty(name='Blend', min=0, default=1, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_blend'))
+    PoseBone.jiggle_air_drag = FloatProperty(name='Air Drag', min=0, default=0, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_air_drag'))
+    PoseBone.jiggle_friction = FloatProperty(name='Friction', min=0, default=0.1, max=1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_friction'))
+    PoseBone.jiggle_collision_radius = FloatProperty(name='Collision Radius', min=0, default=0.1, override={'LIBRARY_OVERRIDABLE'}, update=lambda s, c: update_pose_bone_jiggle_prop(s, c, 'jiggle_collision_radius'))
     
-    
-    #internal variables
     bpy.utils.register_class(JiggleBone)
     PoseBone.jiggle = PointerProperty(type=JiggleBone, override={'LIBRARY_OVERRIDABLE'})
     bpy.utils.register_class(JiggleObject)
@@ -2217,42 +1756,25 @@ def register():
     bpy.utils.register_class(JiggleScene)
     Scene.jiggle = PointerProperty(type=JiggleScene, override={'LIBRARY_OVERRIDABLE'})
 
-    bpy.utils.register_class(SCENE_OT_JiggleReset)
-    bpy.utils.register_class(ANIM_OT_JiggleClearKeyframes)
-    bpy.utils.register_class(SCENE_OT_JiggleProfile)
-    bpy.utils.register_class(ARMATURE_OT_JiggleCopy)
-    bpy.utils.register_class(ARMATURE_OT_JiggleSelect)
-    bpy.utils.register_class(ARMATURE_OT_JiggleBake)
-    bpy.utils.register_class(JIGGLE_PT_Settings)
-    bpy.utils.register_class(JIGGLE_PT_Bone)
-    bpy.utils.register_class(JIGGLE_PT_NoKeyframesWarning)
-    bpy.utils.register_class(JIGGLE_PT_ConnectedBonesWarning)
-    bpy.utils.register_class(JIGGLE_PT_BoneConstraintsWarning)
-    bpy.utils.register_class(JIGGLE_PT_MeshCollisionWarning)
-    bpy.utils.register_class(JIGGLE_PT_FrameSkippingEnabledWarning)
-    bpy.utils.register_class(JIGGLE_PT_Utilities)
-    bpy.utils.register_class(JIGGLE_PT_Wind)
-    bpy.utils.register_class(JIGGLE_PT_Bake)
-    bpy.utils.register_class(JIGGLE_OT_bone_connected_disable)
-    bpy.utils.register_class(JIGGLE_OT_bone_constraints_disable)
-    bpy.utils.register_class(VIEW3D_OT_JiggleTogglePoseOverlay)
-    bpy.utils.register_class(VIEW3D_OT_JiggleToggleSimulationOverlay)
-    bpy.utils.register_class(SCENE_OT_JiggleToggleProfiler)
-    bpy.utils.register_class(JIGGLE_PT_JiggleBonePresets)
-    bpy.utils.register_class(JIGGLE_MT_JiggleBonePresets)
-    bpy.utils.register_class(JIGGLE_OT_AddJiggleBonePreset)
-
+    classes = (
+        SCENE_OT_JiggleReset, ANIM_OT_JiggleClearKeyframes, SCENE_OT_JiggleProfile,
+        ARMATURE_OT_JiggleCopy, ARMATURE_OT_JiggleSelect, ARMATURE_OT_JiggleBake,
+        JIGGLE_PT_Settings, JIGGLE_PT_Bone, JIGGLE_PT_NoKeyframesWarning,
+        JIGGLE_PT_ConnectedBonesWarning, JIGGLE_PT_BoneConstraintsWarning, JIGGLE_PT_MeshCollisionWarning,
+        JIGGLE_PT_FrameSkippingEnabledWarning, JIGGLE_PT_Utilities, JIGGLE_PT_Wind, JIGGLE_PT_Bake,
+        JIGGLE_OT_bone_connected_disable, JIGGLE_OT_bone_constraints_disable, VIEW3D_OT_JiggleTogglePoseOverlay,
+        VIEW3D_OT_JiggleToggleSimulationOverlay, SCENE_OT_JiggleToggleProfiler, JIGGLE_PT_JiggleBonePresets,
+        JIGGLE_MT_JiggleBonePresets, JIGGLE_OT_AddJiggleBonePreset
+    )
+    for cls in classes: bpy.utils.register_class(cls)
 
     bpy.types.VIEW3D_PT_overlay.append(draw_jiggle_overlay_menu)
-    
     bpy.app.handlers.frame_change_post.append(jiggle_post)
     bpy.app.handlers.render_pre.append(jiggle_render_pre)
     bpy.app.handlers.render_post.append(jiggle_render_post)
     bpy.app.handlers.render_cancel.append(jiggle_render_cancel)
     bpy.app.handlers.animation_playback_pre.append(jiggle_playback_start)
     bpy.app.handlers.animation_playback_post.append(jiggle_playback_end)
-
-    # Debugging for NLA Bake
     bpy.app.handlers.frame_change_pre.append(debug_frame_change_pre)
     bpy.app.handlers.frame_change_post.append(debug_frame_change_post)
 
@@ -2260,41 +1782,26 @@ def unregister():
     bpy.utils.unregister_class(JiggleBone)
     bpy.utils.unregister_class(JiggleObject)
     bpy.utils.unregister_class(JiggleScene)
-    bpy.utils.unregister_class(SCENE_OT_JiggleReset)
-    bpy.utils.unregister_class(ANIM_OT_JiggleClearKeyframes)
-    bpy.utils.unregister_class(SCENE_OT_JiggleProfile)
-    bpy.utils.unregister_class(ARMATURE_OT_JiggleCopy)
-    bpy.utils.unregister_class(ARMATURE_OT_JiggleSelect)
-    bpy.utils.unregister_class(ARMATURE_OT_JiggleBake)
-    bpy.utils.unregister_class(JIGGLE_PT_Settings)
-    bpy.utils.unregister_class(JIGGLE_PT_Bone)
-    bpy.utils.unregister_class(JIGGLE_PT_NoKeyframesWarning)
-    bpy.utils.unregister_class(JIGGLE_PT_ConnectedBonesWarning)
-    bpy.utils.unregister_class(JIGGLE_PT_BoneConstraintsWarning)
-    bpy.utils.unregister_class(JIGGLE_PT_MeshCollisionWarning)
-    bpy.utils.unregister_class(JIGGLE_PT_FrameSkippingEnabledWarning)
-    bpy.utils.unregister_class(JIGGLE_PT_Utilities)
-    bpy.utils.unregister_class(JIGGLE_PT_Wind)
-    bpy.utils.unregister_class(JIGGLE_PT_Bake)
-    bpy.utils.unregister_class(JIGGLE_OT_bone_connected_disable)
-    bpy.utils.unregister_class(JIGGLE_OT_bone_constraints_disable)
-    bpy.utils.unregister_class(VIEW3D_OT_JiggleTogglePoseOverlay)
-    bpy.utils.unregister_class(VIEW3D_OT_JiggleToggleSimulationOverlay)
-    bpy.utils.unregister_class(SCENE_OT_JiggleToggleProfiler)
-    bpy.utils.unregister_class(JIGGLE_PT_JiggleBonePresets)
-    bpy.utils.unregister_class(JIGGLE_MT_JiggleBonePresets)
-    bpy.utils.unregister_class(JIGGLE_OT_AddJiggleBonePreset)
+    
+    classes = (
+        SCENE_OT_JiggleReset, ANIM_OT_JiggleClearKeyframes, SCENE_OT_JiggleProfile,
+        ARMATURE_OT_JiggleCopy, ARMATURE_OT_JiggleSelect, ARMATURE_OT_JiggleBake,
+        JIGGLE_PT_Settings, JIGGLE_PT_Bone, JIGGLE_PT_NoKeyframesWarning,
+        JIGGLE_PT_ConnectedBonesWarning, JIGGLE_PT_BoneConstraintsWarning, JIGGLE_PT_MeshCollisionWarning,
+        JIGGLE_PT_FrameSkippingEnabledWarning, JIGGLE_PT_Utilities, JIGGLE_PT_Wind, JIGGLE_PT_Bake,
+        JIGGLE_OT_bone_connected_disable, JIGGLE_OT_bone_constraints_disable, VIEW3D_OT_JiggleTogglePoseOverlay,
+        VIEW3D_OT_JiggleToggleSimulationOverlay, SCENE_OT_JiggleToggleProfiler, JIGGLE_PT_JiggleBonePresets,
+        JIGGLE_MT_JiggleBonePresets, JIGGLE_OT_AddJiggleBonePreset
+    )
+    for cls in classes: bpy.utils.unregister_class(cls)
 
     bpy.types.VIEW3D_PT_overlay.remove(draw_jiggle_overlay_menu)
-    
     bpy.app.handlers.frame_change_post.remove(jiggle_post)
     bpy.app.handlers.render_pre.remove(jiggle_render_pre)
     bpy.app.handlers.render_post.remove(jiggle_render_post)
     bpy.app.handlers.render_cancel.remove(jiggle_render_cancel)
     bpy.app.handlers.animation_playback_pre.remove(jiggle_playback_start)
     bpy.app.handlers.animation_playback_post.remove(jiggle_playback_end)
-
-    # Debugging for NLA Bake
     bpy.app.handlers.frame_change_pre.remove(debug_frame_change_pre)
     bpy.app.handlers.frame_change_post.remove(debug_frame_change_post)
 
