@@ -1965,24 +1965,9 @@ class JiggleObject(PropertyGroup):
         override={'LIBRARY_OVERRIDABLE'}
     )
 
-def install_presets():
-    try:
-        # Path to bundled presets
-        src_dir = os.path.join(os.path.dirname(__file__), "presets", "jigglebones")
-        # Blender's user preset directory
-        dst_dir = bpy.utils.user_resource('SCRIPTS', path="presets/jigglebones", create=True)
-
-        # Copy each preset if it doesn't exist already
-        for filename in os.listdir(src_dir):
-            src_file = os.path.join(src_dir, filename)
-            dst_file = os.path.join(dst_dir, filename)
-            if not os.path.exists(dst_file):
-                shutil.copyfile(src_file, dst_file)
-    except Exception as e:
-        print(f"Error installing default Jiggle Physics jigglebone presets: {e}")
-
 def register():
-    install_presets()
+    # Registers presets from the addon/presets folder, doesn't need /presets
+    bpy.utils.register_preset_path(os.path.dirname(__file__))
     # These properties are strictly animatable properties, as nested properties cannot be animated on pose bones.
     PoseBone.jiggle_angle_elasticity = FloatProperty(
         name = 'Angle Elasticity',
