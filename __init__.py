@@ -944,7 +944,7 @@ def draw_callback():
     if jiggle.debug: _jiggle_globals.profiler.disable()
         
 def jiggle_simulate(scene, depsgraph, virtual_particles, framecount):
-    dt = 1.0 / scene.render.fps
+    dt = scene.render.fps_base / scene.render.fps
     dt2 = dt*dt
 
     # Get wind settings
