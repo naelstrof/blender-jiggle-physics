@@ -1192,9 +1192,19 @@ class ANIM_OT_JiggleClearKeyframes(Operator):
         for bone in context.selected_pose_bones:
             for prop in ['jiggle_root_elasticity', 'jiggle_angle_elasticity', 'jiggle_length_elasticity', 'jiggle_elasticity_soften', 'jiggle_gravity', 'jiggle_blend', 'jiggle_air_drag', 'jiggle_friction', 'jiggle_collision_radius']:
                 data_path = f'pose.bones["{bone.name}"].{prop}'
-                fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path == data_path]
-                for fc in fcurves_to_remove:
-                    action.fcurves.remove(fc)
+                if bpy.app.version < (5, 0, 0):
+                    fcurves_to_remove = [fc for fc in action.fcurves if fc.data_path == data_path]
+                    for fc in fcurves_to_remove:
+                        action.fcurves.remove(fc)
+                else:
+                    for layer in action.layers:
+                        for strip in layer.strips:
+                            if not hasattr(strip, "channelbags"):
+                                continue
+                            for channelbag in strip.channelbags:
+                                for fcurve in list(channelbag.fcurves):
+                                    if fcurve.data_path == data_path:
+                                        channelbag.fcurves.remove(fcurve)
         return {'FINISHED'}
 
 class SCENE_OT_JiggleProfile(Operator):
