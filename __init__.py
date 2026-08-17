@@ -458,7 +458,7 @@ class VirtualParticle:
         self.desired_length_to_parent = max((self.pose - self.parent_pose).length, MERGE_BONE_THRESHOLD)
 
     def set_child(self, child):
-        self.children.append(child)
+        child not in self.children and self.children.append(child)
 
     def write(self):
         match self.particleType:
@@ -486,23 +486,33 @@ class VirtualParticle:
         else:
             self.working_position = self.position + velocity * (1.0-self.jiggle_settings.air_drag) + local_space_velocity * (1.0-self.jiggle_settings.friction) + gravity * self.jiggle_settings.gravity * dt2 + wind_force * dt2
 
-    def mesh_collide(self, collider, depsgraph, position):
-        collider_matrix = collider.matrix_world
-        local_working_position = collider_matrix.inverted() @ position
-        result, local_location, local_normal, _ = collider.closest_point_on_mesh(local_working_position, depsgraph=depsgraph)
+    def mesh_collide(self, obj, depsgraph, pos):
+        obj_mat = obj.matrix_world
+        local_pos = obj_mat.inverted() @ pos
+        local_rad = self.parent.jiggle_settings.collision_radius
+        result, contact_pos, contact_norm, _ = obj.closest_point_on_mesh(
+            local_pos,
+            distance=local_rad,
+            depsgraph=depsgraph)
+
         if not result:
-            return position
-        location = collider_matrix @ local_location
-        normal = collider_matrix.to_quaternion() @ local_normal
-        diff = position-location
+            # colliding if diff vector from last position intersects with mesh
+            last_pos = obj_mat.inverted() @ self.position_last
+            diff = local_pos - last_pos
+            result, contact_pos, contact_norm, _ = obj.ray_cast(
+                last_pos,
+                diff,
+                distance=diff.length + local_rad,
+                depsgraph=depsgraph)
+            local_pos = last_pos
+        
+        # also not colliding if contacting a back face
+        if not result or contact_norm.dot(contact_pos - local_pos) > 0:
+            return pos
+        contact_pos = obj_mat @ contact_pos
+        norm = obj_mat.to_quaternion() @ contact_norm
 
-        local_radius = self.parent.jiggle_settings.collision_radius
-        bone_matrix_world = (self.bone.id_data.matrix_world @ self.bone.matrix)
-        world_radius = sum(bone_matrix_world.to_scale()) / 3.0 * local_radius
-
-        if (diff).length > world_radius:
-            return position
-        return location + diff.normalized() * world_radius
+        return contact_pos + norm * local_rad
 
     def empty_collide(self, collider, position):
         collider_matrix = collider.matrix_world
